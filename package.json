@@ -1,0 +1,12 @@
+{
+  "name": "realtime-charts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Realtime stock charts monitoring system. Tick-level WebSocket stream with OHLCV candles aggregated up to 1-minute resolution.",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build"
+  }
+}
