@@ -1,0 +1,17 @@
+{
+  "name": "realtime-charts-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Realtime stock charts WebSocket server with simulated tick feed and OHLCV aggregation.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
