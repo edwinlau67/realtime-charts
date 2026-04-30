@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "./Chart.jsx";
 import MacdChart from "./MacdChart.jsx";
+import SourceChip from "./components/SourceChip.jsx";
 import { useMarketSocket } from "./useMarketSocket.js";
 import { macdSeriesData, macdTrend } from "./indicators.js";
 import { liveSessionFor, sessionLabel, formatEtClock, msUntilNextBoundary } from "./session.js";
 
-const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+const _loc = globalThis.location;
+const WS_URL = _loc
+  ? `${_loc.protocol === "https:" ? "wss" : "ws"}://${_loc.host}/ws`
+  : "ws://localhost:4000/ws";
 
 const INTERVALS = [
   { key: "1s",  label: "1s"  },
@@ -217,27 +221,28 @@ export default function App() {
         <aside className="sidebar">
           <h3>Data Sources</h3>
           <div className="source-filter">
-            <button
-              className={`src-chip all ${filterSource === "all" ? "active" : ""}`}
+            <SourceChip
+              id="all"
+              all
+              label="All"
+              count={symbols.length}
+              active={filterSource === "all"}
               onClick={() => setFilterSource("all")}
-            >
-              All
-              <span className="src-count">{symbols.length}</span>
-            </button>
+            />
             {sources.map((s) => {
               const meta = SOURCE_META[s.id] || { label: s.id, color: "#888", title: s.name };
               return (
-                <button
+                <SourceChip
                   key={s.id}
-                  className={`src-chip ${filterSource === s.id ? "active" : ""}`}
-                  style={{ "--src-color": meta.color }}
+                  id={s.id}
+                  label={meta.label}
+                  count={s.symbols}
+                  color={meta.color}
+                  status={s.status}
                   title={`${s.name} · ${s.status}${s.detail ? " · " + s.detail : ""}`}
+                  active={filterSource === s.id}
                   onClick={() => setFilterSource(s.id)}
-                >
-                  <span className={`src-status src-status-${s.status}`} />
-                  {meta.label}
-                  <span className="src-count">{s.symbols}</span>
-                </button>
+                />
               );
             })}
           </div>
