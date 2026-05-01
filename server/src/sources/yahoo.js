@@ -1,6 +1,11 @@
 import { Source } from "./base.js";
 import { sessionForUSEquity } from "../session.js";
 
+function readTimeoutMs(envName, fallback) {
+  const n = Number(process.env[envName] || fallback);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // Yahoo Finance public chart endpoint. No API key, no auth, no signup.
 // Used by yfinance, node-yahoo-finance, and many other open-source projects.
 //
@@ -19,15 +24,12 @@ const HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 const URL = (host, sym) =>
   `https://${host}/v8/finance/chart/${encodeURIComponent(sym)}` +
   `?interval=1m&range=1d&includePrePost=true`;
-const STOOQ_URL = (sym) =>
-  `https://stooq.com/q/l/?s=${encodeURIComponent(toStooqSymbol(sym))}&f=sd2t2ohlcv&h&e=csv`;
 
 // Hard cap on outbound HTTP calls. Without this a hung upstream (Yahoo
 // occasionally holds connections open instead of returning 429) lets every
 // poll tick stack a new pending fetch on top of the previous one until we
 // run out of sockets / memory.
-const FETCH_TIMEOUT_MS = 5000;
-async function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+async function fetchWithTimeout(url, init = {}, timeoutMs) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -49,18 +51,17 @@ const DEFAULT_SYMBOLS = [
   { symbol: "QQQ",   name: "Invesco QQQ Trust"  },
 ];
 
-// Browser-like UA — Yahoo will return 401/403 to the default Node UA.
+// Browser-like headers — Yahoo returns 401/403/429 more aggressively to bare
+// Node clients; Referer/Origin match what finance.yahoo.com sends.
 const HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Accept": "application/json,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Referer": "https://finance.yahoo.com/",
+  "Origin": "https://finance.yahoo.com",
 };
-const CSV_HEADERS = {
-  ...HEADERS,
-  "Accept": "text/csv,text/plain,*/*",
-};
-
 export class YahooSource extends Source {
   constructor({ symbols, pollIntervalMs = 3000 } = {}) {
     super({ id: "yahoo", name: "Yahoo Finance (free polling)" });
@@ -68,12 +69,18 @@ export class YahooSource extends Source {
       typeof s === "string" ? { symbol: s.toUpperCase(), name: s.toUpperCase() } : s
     );
     this.pollIntervalMs = pollIntervalMs;
+    // Datacenter / VPN egress often needs a longer budget than 5 s.
+    this.yahooTimeoutMs = Math.max(5000, readTimeoutMs("YAHOO_FETCH_TIMEOUT_MS", 15000));
+    this._pollConcurrency = Math.min(
+      4,
+      Math.max(1, Number(process.env.YAHOO_POLL_CONCURRENCY || 4) || 4),
+    );
     this._timer = null;
+    this._pollInFlight = false;
     this._closing = false;
     this._lastBarVolume = new Map(); // symbol -> last cumulative volume seen for current bar
     this._lastBarTs     = new Map(); // symbol -> last bar timestamp seen
     this._consecErrors  = 0;
-    this._usingStooqFallback = false;
   }
 
   isAvailable() {
@@ -110,51 +117,102 @@ export class YahooSource extends Source {
 
   async _poll() {
     if (this._closing) return;
+    if (this._pollInFlight) return;
+    this._pollInFlight = true;
     let lastErr = null;
-    const results = await Promise.all(
-      this.symbols.map((s) =>
-        this._fetchOne(s.symbol).catch((e) => { lastErr = e; return null; })
-      )
-    );
+    try {
+      const results = [];
+      const n = this.symbols.length;
+      const batch = Math.min(this._pollConcurrency, n);
+      for (let i = 0; i < n; i += batch) {
+        const slice = this.symbols.slice(i, i + batch);
+        const part = await Promise.all(
+          slice.map((s) =>
+            this._fetchOne(s.symbol).catch((e) => { lastErr = e; return null; })
+          )
+        );
+        results.push(...part);
+      }
 
-    const ok = results.filter(Boolean);
-    if (ok.length === 0) {
-      this._consecErrors++;
-      const reason = lastErr?.message || "all polls failed";
-      const hint = /\b429\b/.test(reason)
-        ? " (Yahoo rate-limited this IP; try YAHOO_POLL_MS=10000 or use stooq instead)"
-        : "";
-      this.setStatus("error", `${reason}${hint} (${this._consecErrors}x)`);
-      return;
+      const ok = results.filter(Boolean);
+      if (ok.length === 0) {
+        this._consecErrors++;
+        const reason = lastErr?.message || "all polls failed";
+        let hint = "";
+        if (/\b429\b/.test(reason)) {
+          hint = " (Yahoo rate-limited; try YAHOO_POLL_MS=15000, residential IP, or FINNHUB_API_KEY)";
+        } else if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|EHOSTUNREACH|ETIMEDOUT/i.test(reason)) {
+          hint = " (network/DNS issue reaching Yahoo host)";
+        } else if (/timeout|aborted/i.test(reason)) {
+          hint = " (upstream slow or blocked; increase YAHOO_FETCH_TIMEOUT_MS or use finnhub)";
+        }
+        this.setStatus("error", `${reason}${hint} (${this._consecErrors}x)`);
+        return;
+      }
+      this._consecErrors = 0;
+      this.setStatus("live", `${ok.length}/${this.symbols.length} symbols · poll ${this.pollIntervalMs}ms`);
+      for (const tick of ok) this.emit("tick", tick);
+    } finally {
+      this._pollInFlight = false;
     }
-    this._consecErrors = 0;
-    const suffix = this._usingStooqFallback ? " · failover: stooq" : "";
-    this.setStatus("live", `${ok.length}/${this.symbols.length} symbols · poll ${this.pollIntervalMs}ms${suffix}`);
-    for (const tick of ok) this.emit("tick", tick);
   }
 
   async _fetchOne(symbol) {
     let lastStatus = 0;
+    let lastNetErr = null;
     let data = null;
     for (const host of HOSTS) {
-      const res = await fetchWithTimeout(URL(host, symbol), { headers: HEADERS });
-      if (res.ok) { data = await res.json(); break; }
+      let res = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await fetchWithTimeout(
+            URL(host, symbol),
+            { headers: HEADERS },
+            this.yahooTimeoutMs,
+          );
+          break;
+        } catch (e) {
+          lastNetErr = e;
+          if (e?.message === "fetch failed") {
+            const code = e?.cause?.code || "";
+            const causeMsg = e?.cause?.message || "";
+            const detail = [code, causeMsg].filter(Boolean).join(" ");
+            lastNetErr = new Error(`fetch failed${detail ? ` (${detail})` : ""}`);
+          }
+          if (e?.name === "AbortError" && attempt === 0) {
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          }
+          res = null;
+          break;
+        }
+      }
+      if (!res) continue;
+      if (res.ok) {
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+        if (data) break;
+        continue;
+      }
       lastStatus = res.status;
       if (res.status !== 429 && res.status !== 401) break;
     }
     if (!data) {
-      // Auto failover path: Yahoo throttles datacenter/shared egress IPs often.
-      // When it does, try Stooq for the same symbol and keep streaming.
-      if (lastStatus === 429 || lastStatus === 401) {
-        const fallback = await this._fetchOneFromStooq(symbol);
-        if (fallback) {
-          this._usingStooqFallback = true;
-          return fallback;
-        }
+      if (lastNetErr) {
+        const msg = lastNetErr.name === "AbortError"
+          ? `Yahoo timeout after ${this.yahooTimeoutMs}ms`
+          : `${lastNetErr.message || "network error"}`;
+        throw new Error(msg);
       }
-      throw new Error(`HTTP ${lastStatus}`);
+      throw new Error(
+        lastStatus
+          ? `HTTP ${lastStatus}`
+          : "Yahoo unreachable",
+      );
     }
-    this._usingStooqFallback = false;
 
     const result = data?.chart?.result?.[0];
     const meta   = result?.meta;
@@ -206,50 +264,4 @@ export class YahooSource extends Source {
     };
   }
 
-  async _fetchOneFromStooq(symbol) {
-    const res = await fetchWithTimeout(STOOQ_URL(symbol), { headers: CSV_HEADERS });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (!/^Symbol\s*,/i.test(text)) return null;
-    const rows = parseCsv(text);
-    if (!rows.length) return null;
-    const row = rows[0];
-    const price = Number(row.Close);
-    const vol = Number(row.Volume) || 0;
-    if (!Number.isFinite(price) || price <= 0) return null;
-    const time = parseDate(row.Date, row.Time) || Date.now();
-    return {
-      source: this.id,
-      symbol,
-      time,
-      price,
-      volume: Math.max(1, Math.round(vol / 60)),
-      session: sessionForUSEquity(time),
-    };
-  }
-}
-
-function toStooqSymbol(symbol) {
-  // Basic US-equity mapping: AAPL -> aapl.us
-  // Keep existing exchange suffixes if caller already provided one.
-  if (symbol.includes(".")) return symbol.toLowerCase();
-  return `${symbol.toLowerCase()}.us`;
-}
-
-function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",");
-  return lines.slice(1).map((line) => {
-    const cols = line.split(",");
-    const row = {};
-    for (let i = 0; i < headers.length; i++) row[headers[i]] = cols[i];
-    return row;
-  });
-}
-
-function parseDate(date, time) {
-  if (!date || date === "N/D") return null;
-  const ms = Date.parse(`${date}T${time || "00:00:00"}Z`);
-  return Number.isFinite(ms) ? ms : null;
 }
