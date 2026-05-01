@@ -14,8 +14,8 @@ import { FinnhubSource }   from "./finnhub.js";
 //
 // Configuration (env):
 //   SOURCES                comma list of any of: simulated, binance, coinbase,
-//                          kraken, yahoo, finnhub. Default: all zero-key
-//                          sources (everything except finnhub).
+//                          kraken, yahoo, stooq, finnhub. Default: all zero-key
+//                          sources except stooq and finnhub (stooq/finnhub are opt-in).
 //   TICK_MS                simulator tick cadence (default 250)
 //   FINNHUB_API_KEY        required to enable Finnhub
 //   BINANCE_PAIRS          comma list, e.g. "btcusdt,ethusdt"
