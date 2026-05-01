@@ -1,6 +1,11 @@
 import { Source } from "./base.js";
 import { sessionForUSEquity } from "../session.js";
 
+function readTimeoutMs(envName, fallback) {
+  const n = Number(process.env[envName] || fallback);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // Stooq free CSV quote endpoint. No API key, no auth, no signup. Stooq does
 // not WAF cloud/datacenter IPs the way Yahoo does, so this is the most
 // reliable zero-key stock source for non-residential deployments.
@@ -37,12 +42,13 @@ const HEADERS = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Accept": "text/csv,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Referer": "https://stooq.com/",
 };
 
 // Hard cap on outbound HTTP calls so a hung Stooq response can't stack
 // pending fetches on every poll tick.
-const FETCH_TIMEOUT_MS = 5000;
-async function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+async function fetchWithTimeout(url, init = {}, timeoutMs) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
@@ -71,7 +77,15 @@ export class StooqSource extends Source {
     super({ id: "stooq", name: "Stooq (free CSV polling)" });
     this.symbols = (symbols && symbols.length ? symbols : DEFAULT_SYMBOLS).map(normalize);
     this.pollIntervalMs = pollIntervalMs;
+    // Stooq is often high-latency or filtered on VPN/corp networks; 5 s was
+    // too aggressive and surfaced only Node's generic AbortError message.
+    this.fetchTimeoutMs = Math.max(8000, readTimeoutMs("STOOQ_FETCH_TIMEOUT_MS", 25000));
+    this._pollConcurrency = Math.min(
+      3,
+      Math.max(1, Number(process.env.STOOQ_POLL_CONCURRENCY || 3) || 3),
+    );
     this._timer = null;
+    this._pollInFlight = false;
     this._closing = false;
     this._lastPrice = new Map();
     this._consecErrors = 0;
@@ -104,74 +118,114 @@ export class StooqSource extends Source {
 
   async _poll() {
     if (this._closing) return;
+    if (this._pollInFlight) return;
+    this._pollInFlight = true;
     let lastErr = null;
+    try {
+      const results = [];
+      const n = this.symbols.length;
+      const batch = Math.min(this._pollConcurrency, n);
+      for (let i = 0; i < n; i += batch) {
+        const slice = this.symbols.slice(i, i + batch);
+        const part = await Promise.all(
+          slice.map((meta) =>
+            this._fetchOne(meta).catch((e) => { lastErr = e; return null; })
+          )
+        );
+        results.push(...part);
+      }
 
-    const results = await Promise.all(
-      this.symbols.map((meta) =>
-        this._fetchOne(meta).catch((e) => { lastErr = e; return null; })
-      )
-    );
+      const ticks = results.filter(Boolean);
+      if (ticks.length === 0) {
+        this._consecErrors++;
+        const reason = lastErr?.message || "all polls failed";
+        const hint =
+          /timeout|Stooq timeout|cannot reach stooq\.com/i.test(reason)
+            ? " — stooq.com blocked or very slow? Try VPN off, STOOQ_FETCH_TIMEOUT_MS=40000, or FINNHUB_API_KEY"
+            : /fetch failed|ENOTFOUND|ECONNREFUSED|EHOSTUNREACH|ETIMEDOUT|network error/i.test(reason)
+              ? " — network/DNS cannot reach stooq.com (try different DNS/VPN/network)"
+              : "";
+        this.setStatus("error", `${reason}${hint} (${this._consecErrors}x)`);
+        return;
+      }
 
-    const ticks = results.filter(Boolean);
-    if (ticks.length === 0) {
-      this._consecErrors++;
-      this.setStatus("error", `${lastErr?.message || "all polls failed"} (${this._consecErrors}x)`);
-      return;
+      let emitted = 0;
+      for (const t of ticks) {
+        // Only emit when price actually changes — Stooq returns the same close
+        // until the next exchange tick, otherwise we'd spam identical ticks.
+        const prev = this._lastPrice.get(t.symbol);
+        if (prev != null && prev === t.price) continue;
+        this._lastPrice.set(t.symbol, t.price);
+        this.emit("tick", t);
+        emitted++;
+      }
+
+      this._consecErrors = 0;
+      this.setStatus(
+        "live",
+        emitted
+          ? `${emitted} updated · ${ticks.length}/${this.symbols.length} fetched`
+          : `${ticks.length}/${this.symbols.length} fetched · no changes`
+      );
+    } finally {
+      this._pollInFlight = false;
     }
-
-    let emitted = 0;
-    for (const t of ticks) {
-      // Only emit when price actually changes — Stooq returns the same close
-      // until the next exchange tick, otherwise we'd spam identical ticks.
-      const prev = this._lastPrice.get(t.symbol);
-      if (prev != null && prev === t.price) continue;
-      this._lastPrice.set(t.symbol, t.price);
-      this.emit("tick", t);
-      emitted++;
-    }
-
-    this._consecErrors = 0;
-    this.setStatus(
-      "live",
-      emitted
-        ? `${emitted} updated · ${ticks.length}/${this.symbols.length} fetched`
-        : `${ticks.length}/${this.symbols.length} fetched · no changes`
-    );
   }
 
   async _fetchOne(meta) {
-    const res = await fetchWithTimeout(URL(meta.stooq), { headers: HEADERS });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 700));
+      try {
+        const res = await fetchWithTimeout(
+          URL(meta.stooq),
+          { headers: HEADERS },
+          this.fetchTimeoutMs,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
 
-    // Stooq sometimes returns a 200 with a plain-text error body instead of
-    // CSV — most commonly "Exceeded the daily hits limit" when the client IP
-    // has burned through the free tier's daily quota. Surface that clearly so
-    // it's not mistaken for a transient failure.
-    if (!/^Symbol\s*,/i.test(text)) {
-      const snippet = text.trim().split("\n")[0].slice(0, 120);
-      throw new Error(`stooq: ${snippet || "non-CSV response"}`);
+        // Stooq sometimes returns a 200 with a plain-text error body instead of
+        // CSV — most commonly "Exceeded the daily hits limit" when the client IP
+        // has burned through the free tier's daily quota. Surface that clearly so
+        // it's not mistaken for a transient failure.
+        if (!/^Symbol\s*,/i.test(text)) {
+          const snippet = text.trim().split("\n")[0].slice(0, 120);
+          throw new Error(`stooq: ${snippet || "non-CSV response"}`);
+        }
+
+        const rows = parseCsv(text);
+        if (!rows.length) return null;
+        const row = rows[0];
+
+        const price  = Number(row.Close);
+        const volume = Number(row.Volume) || 0;
+        if (!Number.isFinite(price) || price <= 0) return null;
+
+        const time = parseDate(row.Date, row.Time) || Date.now();
+        return {
+          source: this.id,
+          symbol: meta.symbol,
+          time,
+          price,
+          volume: Math.max(1, Math.round(volume / 60)),
+          // Use the bar's actual exchange time so historical Stooq closes are
+          // labeled with the session they actually represent (typically "regular").
+          session: sessionForUSEquity(time),
+        };
+      } catch (e) {
+        if (e?.name === "AbortError") continue;
+        if (e?.message === "fetch failed") {
+          const code = e?.cause?.code || "";
+          const causeMsg = e?.cause?.message || "";
+          const detail = [code, causeMsg].filter(Boolean).join(" ");
+          throw new Error(`fetch failed${detail ? ` (${detail})` : ""}`);
+        }
+        throw e;
+      }
     }
-
-    const rows = parseCsv(text);
-    if (!rows.length) return null;
-    const row = rows[0];
-
-    const price  = Number(row.Close);
-    const volume = Number(row.Volume) || 0;
-    if (!Number.isFinite(price) || price <= 0) return null;
-
-    const time = parseDate(row.Date, row.Time) || Date.now();
-    return {
-      source: this.id,
-      symbol: meta.symbol,
-      time,
-      price,
-      volume: Math.max(1, Math.round(volume / 60)),
-      // Use the bar's actual exchange time so historical Stooq closes are
-      // labeled with the session they actually represent (typically "regular").
-      session: sessionForUSEquity(time),
-    };
+    throw new Error(
+      `Stooq timeout after ${this.fetchTimeoutMs}ms (2 attempts) — cannot reach stooq.com`,
+    );
   }
 }
 
