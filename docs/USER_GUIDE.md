@@ -175,8 +175,8 @@ The **symbols and sources** in the UI come from the **server’s** environment. 
 
 - **Default:** simulated plus Binance, Coinbase, Kraken, Yahoo (no API keys).
 - **Simulator only (offline demo):** `SOURCES=simulated` — no outbound network to market data APIs.
-- **Finnhub:** add `finnhub` to `SOURCES` and set `FINNHUB_API_KEY`.
-- **Stooq:** add `stooq` to `SOURCES`; optionally set `STOOQ_SYMBOLS` and `STOOQ_POLL_MS`.
+- **Finnhub (recommended for reliable US equities):** set `FINNHUB_API_KEY` and add `finnhub` to `SOURCES`, or run the repo preset from the project root: `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` (bundled `FINNHUB_SYMBOLS` — see root `package.json`).
+- **Stooq:** add `stooq` to `SOURCES`; optionally set `STOOQ_SYMBOLS`, `STOOQ_POLL_MS`, `STOOQ_FETCH_TIMEOUT_MS`, and `STOOQ_POLL_CONCURRENCY`. Your network must reach **stooq.com**.
 
 When a **real** source registers a symbol, the **simulator** drops that symbol so you do not get duplicate streams for the same display name.
 
@@ -190,7 +190,8 @@ Full variable list and examples are in [REFERENCE.md](./REFERENCE.md). Feed-spec
 | -------- | ---------------- |
 | **CONNECTING** or **CLOSED** in the top bar | Server running on port **4000**? Firewall? Restart `npm run dev:server`. The client retries with exponential backoff (up to 8 seconds between attempts). |
 | Blank or empty chart | Select a symbol in the watchlist. Confirm `/api/history` returns data (server logs, or open browser devtools **Network**). |
-| Yahoo “rate limited” or stale stocks | Try increasing `YAHOO_POLL_MS` (for example 10000). From datacenter IPs, Yahoo may return HTTP 429; use **Stooq** or residential network, or another source. |
+| Yahoo **HTTP 429** or stale stocks | Yahoo rate-limits many non-residential IPs. Try `YAHOO_POLL_MS=15000`, fewer `YAHOO_SYMBOLS`, or a residential network. For stable live equities, use **Finnhub** (`FINNHUB_API_KEY` + `finnhub` source, or `npm run dev:server:finnhub`). **Stooq** is a separate opt-in source (delayed CSV), not an automatic Yahoo fallback. |
+| Stooq errors or timeouts | Confirm `stooq.com` resolves and is reachable (VPN/firewall/DNS). Increase `STOOQ_FETCH_TIMEOUT_MS` or lower `STOOQ_POLL_CONCURRENCY`. |
 | Source chip shows **error** | Read the hover **detail**. One failed adapter does not stop others. |
 | MACD says **Warming up** | Wait for more candles at the selected interval, or switch to a coarser interval temporarily. |
 | Wrong port | Change `PORT` on the server and ensure `client/vite.config.js` proxy target matches if you deviate from 4000/5173. |

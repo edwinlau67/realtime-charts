@@ -130,8 +130,12 @@ Collision policy:
 - Simulator excludes symbols claimed by real sources.
 
 Yahoo resilience:
-- host fallback: `query1` -> `query2`
-- throttling fallback: if Yahoo 429/401, attempt Stooq fetch for same symbol.
+- host rotation: try `query1.finance.yahoo.com`, then `query2.finance.yahoo.com` when a host returns **401** or **429**
+- per-host timeout + one retry on abort; bounded poll concurrency; no overlapping polls (`_pollInFlight`)
+- **no** automatic cross-source failover (Stooq/Finnhub are separate enabled sources)
+
+Server bootstrap:
+- `dns.setDefaultResultOrder("ipv4first")` in `server/src/index.js` for outbound `fetch` stability
 
 ## 7. Session Model
 
@@ -253,13 +257,13 @@ Key choices:
 
 Primary runtime env:
 - `PORT`, `TICK_MS`, `SOURCES`
-- source-specific symbol/poll vars (`YAHOO_*`, `STOOQ_*`, etc.)
+- source-specific symbol/poll/timeout/concurrency vars (`YAHOO_*`, `STOOQ_*`, `FINNHUB_*`, etc.)
 
 Recommended profiles:
 - local demo: `SOURCES=simulated`
-- free live mixed: default sources
-- equities-focused: `SOURCES=yahoo` or `SOURCES=stooq`
-- key-backed equities: add `finnhub`
+- free live mixed: default sources (`simulated`, crypto WS feeds, Yahoo)
+- equities-focused (no API key): `SOURCES=yahoo` or `SOURCES=stooq` (Stooq requires reachability to stooq.com)
+- key-backed equities (recommended when Yahoo returns 429): `finnhub` with `FINNHUB_API_KEY`; repo preset `npm run dev:server:finnhub` from project root
 
 ## 15. Testing Strategy
 
@@ -332,10 +336,10 @@ Recommended next tests:
     - UI source chips reflect live status changes
 
 - **R8: External feed resilience and fallback**
-  - **Implementation**: reconnect loops in WS adapters, Yahoo host fallback + Stooq failover in `server/src/sources/yahoo.js`, defensive Stooq response parsing in `server/src/sources/stooq.js`
+  - **Implementation**: reconnect loops in WS adapters; Yahoo host rotation + timeouts/retries in `server/src/sources/yahoo.js`; defensive Stooq response parsing, timeouts, and bounded concurrency in `server/src/sources/stooq.js`
   - **Verification evidence**:
     - Reconnect backoff observed in source logs under network failure
-    - Yahoo `429` condition triggers fallback-mode status text
+    - Yahoo **429** surfaces actionable status text (slower poll, fewer symbols, or Finnhub); no hidden cross-source failover from Yahoo
 
 - **R9: Bootstrap and discovery contracts**
   - **Implementation**: `server/src/index.js` REST endpoints (`/api/health`, `/api/sources`, `/api/symbols`, `/api/history`), initial fetch flow in `client/src/App.jsx`

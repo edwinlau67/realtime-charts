@@ -29,22 +29,26 @@ realtime-charts/
     DOT/USD-K). The `-K` suffix marks them as Kraken's quote so they don't
     visually collide with Coinbase's USD pairs. *No key.*
   - **Yahoo Finance** — real US equities, ETFs, and indices via Yahoo's public
-    chart endpoint (HTTP polling, default 3 s cadence, with `query1`→`query2`
-    fallback). Default symbols: AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA,
-    SPY, QQQ. Supports anything Yahoo quotes — pass
+    chart endpoint (HTTP polling, default 3 s cadence). Tries
+    `query1.finance.yahoo.com` then `query2.finance.yahoo.com` when a host
+    returns **401** or **429**; configurable timeout and bounded parallel polls
+    per cycle (`YAHOO_FETCH_TIMEOUT_MS`, `YAHOO_POLL_CONCURRENCY`). There is
+    **no** automatic failover to Stooq from Yahoo — enable `stooq` or `finnhub`
+    separately if needed. Default symbols: AAPL, MSFT, GOOGL, AMZN, NVDA, META,
+    TSLA, SPY, QQQ. Supports anything Yahoo quotes — pass
     `YAHOO_SYMBOLS=^GSPC,EURUSD=X,BTC-USD` to track indices, FX pairs, or
     Yahoo's own crypto tickers. *No key.*
-    > Yahoo aggressively rate-limits requests from cloud/datacenter IPs (HTTP
-    > 429). On a residential connection this is rarely an issue. If you see
-    > "rate-limited" status, slow Yahoo via `YAHOO_POLL_MS=10000` or use
-    > Stooq below.
+    > Yahoo aggressively rate-limits some IPs (**HTTP 429**). If you see
+    > rate-limit errors, increase `YAHOO_POLL_MS` (e.g. **15000**), reduce
+    > `YAHOO_SYMBOLS`, use a residential network, or prefer **Finnhub** below.
   - **Stooq** *(opt-in)* — real US equities & ETFs via Stooq's free CSV quote
     endpoint (HTTP polling, default 5 s cadence). Free tier is typically
-    delayed ~15 minutes during US market hours, but Stooq does not
-    rate-limit datacenter/cloud IPs, so it works reliably from anywhere.
-    Enable with `SOURCES=...,stooq`. *No key.*
+    delayed ~15 minutes during US market hours. Enable with `SOURCES=...,stooq`.
+    Reachability depends on your network (some VPNs/firewalls block or slow
+    **stooq.com**). *No key.*
   - **Finnhub** *(opt-in)* — live US equities trade stream (WebSocket push).
-    Free tier with a free API key (set `FINNHUB_API_KEY`).
+    Free tier with a free API key (set `FINNHUB_API_KEY`). Recommended when
+    Yahoo returns **429**; repo preset: `FINNHUB_API_KEY=xxx npm run dev:server:finnhub`.
 - 8 simulated tickers driven by per-symbol Geometric Brownian Motion when no
   real source claims them (drift + volatility).
 - Tick stream at configurable cadence (default **250 ms** for the simulator;
@@ -130,9 +134,13 @@ Server:
 | `KRAKEN_PAIRS`      | *(default 6 pairs)*                  | Comma list, e.g. `BTC/USD,ETH/USD,SOL/USD`.                                                            |
 | `YAHOO_SYMBOLS`     | *(default 9 stocks/ETFs)*            | Comma list, e.g. `AAPL,MSFT,SPY,^GSPC,EURUSD=X`.                                                       |
 | `YAHOO_POLL_MS`     | `3000`                               | Polling cadence in ms for the Yahoo source. Lower = fresher prices, more requests.                     |
+| `YAHOO_FETCH_TIMEOUT_MS` | `15000` (min `5000`)             | Per-request HTTP timeout for Yahoo.                                                                    |
+| `YAHOO_POLL_CONCURRENCY` | `4` (clamped 1–4)                | Max Yahoo symbols polled in parallel each cycle.                                                       |
 | `STOOQ_SYMBOLS`     | *(default 9 stocks/ETFs)*            | Comma list of Stooq tickers (with market suffix), e.g. `aapl.us,msft.us,spy.us`.                       |
 | `STOOQ_POLL_MS`     | `5000`                               | Polling cadence in ms for the Stooq source.                                                            |
-| `FINNHUB_SYMBOLS`   | *(default 7 stocks)*                 | Comma list, e.g. `AAPL,MSFT,GOOGL`.                                                                    |
+| `STOOQ_FETCH_TIMEOUT_MS` | `25000` (min `8000`)           | Per-request HTTP timeout for Stooq.                                                                    |
+| `STOOQ_POLL_CONCURRENCY` | `3` (clamped 1–3)              | Max Stooq symbols polled in parallel each cycle.                                                       |
+| `FINNHUB_SYMBOLS`   | *(default 7 stocks)*                 | Comma list, e.g. `AAPL,MSFT,GOOGL`. The `dev:server:finnhub` script overrides with a longer preset list. |
 
 Examples:
 
@@ -151,6 +159,9 @@ SOURCES=yahoo YAHOO_SYMBOLS=^GSPC,^DJI,^IXIC,EURUSD=X,GBPUSD=X,GC=F npm run dev:
 
 # real stocks via Stooq (works from any IP including datacenters; ~15min delay)
 SOURCES=stooq STOOQ_SYMBOLS=aapl.us,msft.us,googl.us,spy.us,qqq.us npm run dev:server
+
+# recommended: stable real-time US stocks via Finnhub (API key required; bundled FINNHUB_SYMBOLS in package.json)
+FINNHUB_API_KEY=xxx npm run dev:server:finnhub
 
 # both stock sources side-by-side for comparison
 SOURCES=simulated,yahoo,stooq npm run dev:server
