@@ -56,9 +56,12 @@ Core backend modules:
 
 Core frontend modules:
 - `client/src/App.jsx` (state orchestration + UI composition)
+- `client/src/components/SourceChip.jsx` (data-source filter chips + status)
 - `client/src/Chart.jsx` (candlestick + volume)
 - `client/src/MacdChart.jsx` (MACD panel)
+- `client/src/chartTheme.js` (lightweight-charts theming)
 - `client/src/indicators.js` (EMA/MACD math)
+- `client/src/useAppearance.js` (Auto/Light/Dark preference, `localStorage`, `data-theme`)
 - `client/src/useMarketSocket.js` (reconnecting WS hook)
 - `client/src/session.js` (live client-side session labeling)
 
@@ -76,7 +79,10 @@ All sources must emit:
 
 Notes:
 - Crypto/simulator are treated as `regular` (24/7 open semantic).
-- US-equity sources classify session by ET time windows.
+- US-equity sources classify session by ET time windows on the server tick.
+- **Yahoo** sets tick `session` from **poll wall-clock** (`Date.now()`), not the
+  intraday bar timestamp, so sub-minute aggregation aligns with “now” in ET;
+  **Stooq** and **Finnhub** use quote/trade time for `session`.
 
 ### 5.2 Candle
 
@@ -187,7 +193,7 @@ Default subscription:
 ## 10. Frontend Design
 
 UI zones:
-- top status bar (connection + ET clock)
+- top status bar (connection + ET clock + appearance: Auto/Light/Dark)
 - source filter chips + watchlist
 - primary candlestick chart + volume
 - optional MACD panel
@@ -257,15 +263,19 @@ Recommended profiles:
 
 ## 15. Testing Strategy
 
-Current verification style:
-- build checks (`vite build`)
-- smoke tests against REST + WS paths
-- session-boundary unit-style checks via script
+Implemented checks:
+- **Unit tests**: `npm run test:server` (Node test runner: `server/test/*.test.js` —
+  session resolver, aggregator), `npm run test:client` (**Vitest** + Testing Library:
+  `client/src/__tests__/*.test.{js,jsx}` — indicators, session helpers, `SourceChip`, UI smoke).
+- **Unified entrypoint**: `npm test` runs server then client tests.
+- **Release helper**: `npm run verify` runs `scripts/verify.sh` — `vite build`, starts
+  `SOURCES=simulated` server on `VERIFY_PORT` (default **4010**), validates `/api/health`,
+  `/api/symbols`, `/api/sources`, `/api/history` (including `candle.session`), rejects bad
+  history queries, and smoke-checks WebSocket `hello` / `tick` / `candle` with `session`.
 
 Recommended next tests:
-- deterministic unit tests for aggregator bucket rollovers
-- contract tests for each source adapter payload normalization
-- integration test for WS subscribe filtering
+- contract tests for each source adapter payload normalization (mocked HTTP/WS)
+- integration test for WS `subscribe` filtering beyond manual checklist
 - visual regression snapshots for session coloring and MACD overlays
 
 ## 16. Future Enhancements
@@ -316,7 +326,7 @@ Recommended next tests:
     - Trend badge states update from live candle stream
 
 - **R7: Source health visibility and degraded-mode behavior**
-  - **Implementation**: adapter status emissions (`server/src/sources/base.js` + sources), WS `source-status` and REST `/api/sources` in `server/src/index.js`, source chips in `client/src/App.jsx`
+  - **Implementation**: adapter status emissions (`server/src/sources/base.js` + sources), WS `source-status` and REST `/api/sources` in `server/src/index.js`, `client/src/components/SourceChip.jsx` + sidebar wiring in `client/src/App.jsx`
   - **Verification evidence**:
     - Source state transitions observed (`connecting` -> `live`/`error`)
     - UI source chips reflect live status changes
@@ -334,10 +344,16 @@ Recommended next tests:
     - Health and metadata endpoints return valid JSON contracts
 
 - **R10: Configurable deployment/runtime behavior**
-  - **Implementation**: env parsing in `server/src/index.js`, source wiring in `server/src/sources/manager.js`, operational docs in `README.md`
+  - **Implementation**: env parsing in `server/src/index.js`, source wiring in `server/src/sources/manager.js`, operational docs in `README.md` and `docs/*.md`
   - **Verification evidence**:
     - Launch profiles validated with `SOURCES=...` variations
     - Source counts and enabled set reflected by `/api/sources`
+
+- **R11: Theme / appearance preference**
+  - **Implementation**: `client/src/useAppearance.js` (`localStorage` key `realtime-charts-appearance`), `client/src/chartTheme.js`, `client/src/App.jsx`, `client/src/styles.css`
+  - **Verification evidence**:
+    - Manual: Auto follows OS; Light/Dark persist across reload
+    - Client tests cover appearance hook behavior where applicable
 
 ## 18. Verification Checklist (Release Sign-off)
 
@@ -349,6 +365,8 @@ Run this checklist before tagging a release.
 - [ ] `npm run dev:server` starts and prints server URL + enabled source set.
 - [ ] `npm run dev:client` starts and loads UI at `http://localhost:5173`.
 - [ ] `npm --prefix client run build` succeeds.
+- [ ] `npm test` passes (server + client unit tests).
+- [ ] `npm run verify` passes (or `VERIFY_PORT` adjusted if 4010 is in use).
 
 ### 18.2 REST contract checks
 
@@ -386,7 +404,8 @@ Run this checklist before tagging a release.
 ### 18.6 UI behavior checks
 
 - [ ] Watchlist updates live and source badges render correctly.
-- [ ] Source filter chips narrow watchlist.
+- [ ] Source filter chips narrow watchlist (`SourceChip` states match `/api/sources`).
+- [ ] Appearance **Auto / Light / Dark** works and survives page reload.
 - [ ] Session pill and ET clock update continuously.
 - [ ] Session legend is visible and matches candle tint behavior.
 - [ ] Candlestick + volume chart updates in realtime.
@@ -414,4 +433,5 @@ Run this checklist before tagging a release.
 
 - [ ] `README.md` matches implemented endpoints and env vars.
 - [ ] `DESIGN_SPEC.md` traceability entries match current file structure.
-- [ ] Any newly added source/feature is reflected in both docs.
+- [ ] `docs/USER_GUIDE.md`, `docs/REFERENCE.md`, and `docs/DATA_SOURCES.md` match current behavior.
+- [ ] Any newly added source/feature is reflected in the docs above.
