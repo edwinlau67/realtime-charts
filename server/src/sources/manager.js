@@ -23,8 +23,12 @@ import { FinnhubSource }   from "./finnhub.js";
 //   KRAKEN_PAIRS           comma list, e.g. "BTC/USD,ETH/USD"
 //   YAHOO_SYMBOLS          comma list, e.g. "AAPL,MSFT,SPY,^GSPC,EURUSD=X"
 //   YAHOO_POLL_MS          poll cadence for Yahoo (default 3000)
+//   YAHOO_FETCH_TIMEOUT_MS outbound timeout per Yahoo request (default 15000)
+//   YAHOO_POLL_CONCURRENCY max parallel symbols per poll (default 4)
 //   STOOQ_SYMBOLS          comma list of Stooq tickers, e.g. "aapl.us,msft.us"
 //   STOOQ_POLL_MS          poll cadence for Stooq (default 5000)
+//   STOOQ_FETCH_TIMEOUT_MS per-request timeout (default 25000)
+//   STOOQ_POLL_CONCURRENCY max parallel symbols per poll (default 3)
 //   FINNHUB_SYMBOLS        comma list, e.g. "AAPL,MSFT"
 export class SourceManager extends EventEmitter {
   constructor({
