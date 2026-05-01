@@ -1,7 +1,12 @@
 import express from "express";
 import cors from "cors";
 import http from "node:http";
+import dns from "node:dns";
 import { WebSocketServer } from "ws";
+
+// Prefer IPv4 first so slow/broken IPv6 routes do not leave HTTPS fetches
+// hanging until the Yahoo/Stooq client timeouts fire (common on some networks).
+dns.setDefaultResultOrder("ipv4first");
 import { CandleAggregator, INTERVAL_KEYS } from "./aggregator.js";
 import { SourceManager } from "./sources/manager.js";
 
