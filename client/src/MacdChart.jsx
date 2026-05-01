@@ -1,15 +1,17 @@
 import { useEffect, useRef } from "react";
 import { createChart, LineStyle } from "lightweight-charts";
+import { chartLayoutTheme } from "./chartTheme.js";
 
 // Renders the MACD line, signal line, histogram, and a zero baseline.
 // Accepts an optional `syncRef` that the parent uses to bridge timeScales so
 // panning/zooming the price chart pans the MACD panel and vice versa.
-export default function MacdChart({ data, onReady, syncRef }) {
+export default function MacdChart({ data, onReady, syncRef, resolvedTheme = "dark" }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const macdRef = useRef(null);
   const signalRef = useRef(null);
   const histRef = useRef(null);
+  const zeroLineRef = useRef(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -52,9 +54,9 @@ export default function MacdChart({ data, onReady, syncRef }) {
     });
 
     // Zero baseline.
-    macdSeries.createPriceLine({
+    zeroLineRef.current = macdSeries.createPriceLine({
       price: 0,
-      color: "rgba(138, 147, 184, 0.5)",
+      color: chartLayoutTheme(resolvedTheme).zeroLine,
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       axisLabelVisible: false,
@@ -90,10 +92,32 @@ export default function MacdChart({ data, onReady, syncRef }) {
 
     return () => {
       if (syncRef) syncRef.current = null;
+      zeroLineRef.current = null;
       chart.remove();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const t = chartLayoutTheme(resolvedTheme);
+    chart.applyOptions({
+      layout: {
+        background: { color: "transparent" },
+        textColor: t.textColor,
+        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+      },
+      grid: t.grid,
+      rightPriceScale: { borderColor: t.borderColor },
+      timeScale: {
+        borderColor: t.borderColor,
+        timeVisible: true,
+        secondsVisible: true,
+      },
+    });
+    zeroLineRef.current?.applyOptions({ color: t.zeroLine });
+  }, [resolvedTheme]);
 
   // Bulk update when the parent recomputes from new candles array.
   useEffect(() => {

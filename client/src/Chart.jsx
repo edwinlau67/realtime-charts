@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
 import { createChart, CrosshairMode } from "lightweight-charts";
+import { chartLayoutTheme } from "./chartTheme.js";
 
 // Renders an OHLCV candlestick + volume chart and exposes imperative
 // `setData` / `update` via a ref pattern through the parent. Optionally
 // publishes its timeScale to `syncRef` so a sibling chart can mirror panning.
-export default function Chart({ candles, onReady, syncRef }) {
+export default function Chart({ candles, onReady, syncRef, resolvedTheme = "dark" }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
@@ -85,6 +86,26 @@ export default function Chart({ candles, onReady, syncRef }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const t = chartLayoutTheme(resolvedTheme);
+    chart.applyOptions({
+      layout: {
+        background: { color: "transparent" },
+        textColor: t.textColor,
+        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+      },
+      grid: t.grid,
+      rightPriceScale: { borderColor: t.borderColor },
+      timeScale: {
+        borderColor: t.borderColor,
+        timeVisible: true,
+        secondsVisible: true,
+      },
+    });
+  }, [resolvedTheme]);
 
   // First-load (or symbol/interval change) bulk data.
   useEffect(() => {

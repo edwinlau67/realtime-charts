@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "./Chart.jsx";
 import MacdChart from "./MacdChart.jsx";
 import SourceChip from "./components/SourceChip.jsx";
+import { useAppearance } from "./useAppearance.js";
 import { useMarketSocket } from "./useMarketSocket.js";
 import { macdSeriesData, macdTrend } from "./indicators.js";
 import { liveSessionFor, sessionLabel, formatEtClock, msUntilNextBoundary } from "./session.js";
@@ -32,7 +33,14 @@ const SOURCE_META = {
 
 const symKey = (a) => (a ? `${a.source}:${a.symbol}` : "");
 
+const APPEARANCE_OPTIONS = [
+  { key: "system", label: "Auto" },
+  { key: "light", label: "Light" },
+  { key: "dark", label: "Dark" },
+];
+
 export default function App() {
+  const { appearance, setAppearance, resolvedTheme } = useAppearance();
   const { status, hello, subscribe } = useMarketSocket(WS_URL);
 
   const [symbols, setSymbols] = useState([]);
@@ -206,6 +214,21 @@ export default function App() {
           <span>Realtime Stock Charts</span>
         </div>
         <div className="spacer" />
+        <div className="appearance-switch" title="Match system, or force light or dark">
+          <div className="seg" role="group" aria-label="Appearance: Auto uses system setting">
+            {APPEARANCE_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={appearance === opt.key ? "active" : ""}
+                onClick={() => setAppearance(opt.key)}
+                title={opt.key === "system" ? "Use system light/dark setting" : `Use ${opt.label.toLowerCase()} theme`}
+              >
+                {opt.key === "system" ? "Auto" : opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="status">
           <span className={`pill ${status === "open" ? "ok" : "warn"}`}>
             {status === "open" ? "LIVE" : status.toUpperCase()}
@@ -378,6 +401,7 @@ export default function App() {
               </div>
               <Chart
                 candles={candles}
+                resolvedTheme={resolvedTheme}
                 onReady={(api) => (chartApiRef.current = api)}
                 syncRef={priceSyncRef}
               />
@@ -394,6 +418,7 @@ export default function App() {
                 </div>
                 <MacdChart
                   data={macdData}
+                  resolvedTheme={resolvedTheme}
                   onReady={(api) => (macdApiRef.current = api)}
                   syncRef={macdSyncRef}
                 />
