@@ -39,6 +39,19 @@ const HEADERS = {
   "Accept": "text/csv,text/plain,*/*",
 };
 
+// Hard cap on outbound HTTP calls so a hung Stooq response can't stack
+// pending fetches on every poll tick.
+const FETCH_TIMEOUT_MS = 5000;
+async function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Convert each entry into the canonical { symbol, stooq, name } shape.
 function normalize(s) {
   if (typeof s === "string") {
@@ -127,7 +140,7 @@ export class StooqSource extends Source {
   }
 
   async _fetchOne(meta) {
-    const res = await fetch(URL(meta.stooq), { headers: HEADERS });
+    const res = await fetchWithTimeout(URL(meta.stooq), { headers: HEADERS });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
 

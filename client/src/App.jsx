@@ -46,7 +46,10 @@ export default function App() {
   const [symbols, setSymbols] = useState([]);
   const [sources, setSources] = useState([]);
   const [active, setActive] = useState(null);              // { source, symbol }
-  const [interval, setInterval] = useState("1s");
+  // NOTE: do not name this setter `setInterval` — it would shadow the global
+  // `window.setInterval` and the clock effect below would silently set state
+  // to `undefined` instead of starting a timer.
+  const [interval, setIntervalKey] = useState("1s");
   const [candles, setCandles] = useState([]);
   const [tickers, setTickers] = useState({});             // keyed by `${source}:${symbol}`
   const [filterSource, setFilterSource] = useState("all"); // "all" | source id
@@ -384,7 +387,7 @@ export default function App() {
                 <button
                   key={iv.key}
                   className={iv.key === interval ? "active" : ""}
-                  onClick={() => setInterval(iv.key)}
+                  onClick={() => setIntervalKey(iv.key)}
                 >
                   {iv.label}
                 </button>

@@ -55,10 +55,18 @@ export class CandleAggregator extends EventEmitter {
     const { source, symbol, time, price, volume, session } = tick;
     if (!source || !symbol || !Number.isFinite(price)) return;
 
+    // Volume is added to a running sum on the current bar; a single NaN or
+    // negative value would permanently poison the bar, so coerce defensively.
+    // (Some upstream feeds occasionally send non-numeric quantities.)
+    const safeVolume = Number.isFinite(volume) && volume > 0 ? volume : 0;
+    // Reject ticks with a non-finite timestamp before they index into a
+    // bucket — Math.floor(NaN/1000)*1000 = NaN which corrupts the slot.
+    const safeTime = Number.isFinite(time) ? time : Date.now();
+
     for (const interval of INTERVAL_KEYS) {
       const sec = INTERVALS[interval];
       const slot = this._slot(source, symbol, interval);
-      const start = bucketStart(time, sec);
+      const start = bucketStart(safeTime, sec);
 
       let closed = false;
       if (!slot.current) {
@@ -78,7 +86,7 @@ export class CandleAggregator extends EventEmitter {
       if (price > c.high) c.high = price;
       if (price < c.low)  c.low  = price;
       c.close = price;
-      c.volume += volume;
+      c.volume += safeVolume;
 
       this.emit("update", { source, symbol, interval, candle: { ...c }, closed });
     }

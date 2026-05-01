@@ -22,6 +22,21 @@ const URL = (host, sym) =>
 const STOOQ_URL = (sym) =>
   `https://stooq.com/q/l/?s=${encodeURIComponent(toStooqSymbol(sym))}&f=sd2t2ohlcv&h&e=csv`;
 
+// Hard cap on outbound HTTP calls. Without this a hung upstream (Yahoo
+// occasionally holds connections open instead of returning 429) lets every
+// poll tick stack a new pending fetch on top of the previous one until we
+// run out of sockets / memory.
+const FETCH_TIMEOUT_MS = 5000;
+async function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const DEFAULT_SYMBOLS = [
   { symbol: "AAPL",  name: "Apple Inc."         },
   { symbol: "MSFT",  name: "Microsoft Corp."    },
@@ -122,7 +137,7 @@ export class YahooSource extends Source {
     let lastStatus = 0;
     let data = null;
     for (const host of HOSTS) {
-      const res = await fetch(URL(host, symbol), { headers: HEADERS });
+      const res = await fetchWithTimeout(URL(host, symbol), { headers: HEADERS });
       if (res.ok) { data = await res.json(); break; }
       lastStatus = res.status;
       if (res.status !== 429 && res.status !== 401) break;
@@ -192,7 +207,7 @@ export class YahooSource extends Source {
   }
 
   async _fetchOneFromStooq(symbol) {
-    const res = await fetch(STOOQ_URL(symbol), { headers: CSV_HEADERS });
+    const res = await fetchWithTimeout(STOOQ_URL(symbol), { headers: CSV_HEADERS });
     if (!res.ok) return null;
     const text = await res.text();
     if (!/^Symbol\s*,/i.test(text)) return null;

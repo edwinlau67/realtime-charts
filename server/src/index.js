@@ -31,7 +31,9 @@ const finnhubSymbols = (process.env.FINNHUB_SYMBOLS || "")
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// We don't accept JSON request bodies on any route, but cap the parser anyway
+// so a malicious client can't force the server to buffer a large payload.
+app.use(express.json({ limit: "16kb" }));
 
 const manager = new SourceManager({
   enabled: enabledSources,
@@ -67,10 +69,17 @@ app.get("/api/symbols", (_req, res) => {
 
 // REST: historical candles for a (source, symbol, interval) tuple.
 app.get("/api/history", (req, res) => {
-  const symbol   = String(req.query.symbol || "");
-  const source   = String(req.query.source || "");
+  const symbol   = String(req.query.symbol || "").slice(0, 64);
+  const source   = String(req.query.source || "").slice(0, 32);
   const interval = String(req.query.interval || "1s");
-  const limit    = Math.min(Number(req.query.limit || 240), 600);
+
+  // Clamp limit to a positive integer in [1, 600]. Without this,
+  // limit=-1 / NaN / Infinity flow into Array#slice and return the wrong
+  // window (or the entire history).
+  const rawLimit = Number(req.query.limit ?? 240);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(600, Math.max(1, Math.floor(rawLimit)))
+    : 240;
 
   if (!INTERVAL_KEYS.includes(interval)) {
     return res.status(400).json({ error: `interval must be one of ${INTERVAL_KEYS.join(", ")}` });
@@ -101,9 +110,43 @@ const server = http.createServer(app);
 //                     { type: "tick",   source, symbol, time, price, volume }
 //                     { type: "candle", source, symbol, interval, candle, closed }
 //                     { type: "source-status", id, status, detail }
-const wss = new WebSocketServer({ server, path: "/ws" });
+//
+// Hardening:
+//   * maxPayload caps inbound frames at 64 KiB so a client can't force the
+//     server to buffer a multi-megabyte JSON blob.
+//   * Subscribe arrays are clamped (size + per-string length) for the same
+//     reason — without this a single client could pin large Sets per socket.
+//   * A 30 s ping/pong heartbeat evicts half-open clients so their attached
+//     emitter listeners don't accumulate forever.
+const MAX_WS_PAYLOAD     = 64 * 1024;          // 64 KiB
+const MAX_SUBSCRIBE_LIST = 256;                // entries per array
+const MAX_SUBSCRIBE_ITEM = 64;                 // chars per entry
+const HEARTBEAT_MS       = 30_000;
+const wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  maxPayload: MAX_WS_PAYLOAD,
+});
+
+// Each connection adds 3 listeners on shared emitters. The Node default cap
+// of 10 trips a MaxListenersExceededWarning at ~3 concurrent clients and
+// masks real leaks. Explicitly raise the cap.
+manager.setMaxListeners(0);
+agg.setMaxListeners(0);
+
+function clampStringArray(arr) {
+  if (!Array.isArray(arr)) return null;
+  return arr
+    .slice(0, MAX_SUBSCRIBE_LIST)
+    .map((v) => String(v).slice(0, MAX_SUBSCRIBE_ITEM));
+}
 
 wss.on("connection", (ws) => {
+  // isAlive flips to false on each heartbeat; pong from the client flips it
+  // back to true. If we miss a beat the socket gets terminated.
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; });
+
   const subs = {
     sources:   new Set(manager.describe().map((s) => s.id)),
     symbols:   new Set(manager.getSymbols().map((s) => s.symbol)),
@@ -143,12 +186,16 @@ wss.on("connection", (ws) => {
   }));
 
   ws.on("message", (raw) => {
+    // maxPayload already bounds raw size; toString is safe.
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg?.type === "subscribe") {
-      if (Array.isArray(msg.sources))   subs.sources   = new Set(msg.sources.map(String));
-      if (Array.isArray(msg.symbols))   subs.symbols   = new Set(msg.symbols.map(String));
-      if (Array.isArray(msg.intervals)) subs.intervals = new Set(msg.intervals.map(String));
+      const sources   = clampStringArray(msg.sources);
+      const symbols   = clampStringArray(msg.symbols);
+      const intervals = clampStringArray(msg.intervals);
+      if (sources)   subs.sources   = new Set(sources);
+      if (symbols)   subs.symbols   = new Set(symbols);
+      if (intervals) subs.intervals = new Set(intervals);
       ws.send(JSON.stringify({
         type: "subscribed",
         sources:   [...subs.sources],
@@ -166,6 +213,22 @@ wss.on("connection", (ws) => {
     manager.off("status", onStatus);
   });
 });
+
+// Periodically ping each client; terminate any that didn't pong since the
+// previous beat. This frees up the per-connection emitter listeners that
+// would otherwise leak when a client disappears without a clean close
+// (mobile networks, NAT timeouts, force-killed tabs).
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { /* ignore */ }
+  }
+}, HEARTBEAT_MS);
+wss.on("close", () => clearInterval(heartbeat));
 
 // Prime ~5 minutes of history for the simulated source so charts aren't empty
 // on first connect. Real feeds bootstrap their own history once trades flow.
