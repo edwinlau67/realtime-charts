@@ -230,23 +230,25 @@ Kraken’s `BTC/USD` is published to the rest of the app as **`BTC/USD-K`** (suf
 
 The endpoint is widely used by open-source tooling; Yahoo may change or throttle it without notice.
 
+### Process-wide DNS
+
+`server/src/index.js` calls `dns.setDefaultResultOrder("ipv4first")` so slow or broken IPv6 routes are less likely to leave HTTPS fetches hanging until the per-request timeout (applies to Yahoo, Stooq, and any other `fetch` from the server).
+
 ### HTTP endpoints
 
-**Primary** (tried in order for each symbol):
+**Per symbol**, hosts are tried in order:
 
 `https://{host}/v8/finance/chart/{symbol}?interval=1m&range=1d&includePrePost=true`
 
-- **Hosts**: `query1.finance.yahoo.com`, then `query2.finance.yahoo.com` on **429** or **401** only (loop continues to next host or fails).
+- **Hosts**: `query1.finance.yahoo.com`, then `query2.finance.yahoo.com`.
+- If a host returns **429** or **401**, the client tries the **next** host. Other HTTP statuses stop host rotation for that symbol.
+- Each host request uses a **timeout** (`YAHOO_FETCH_TIMEOUT_MS`, default **15000** ms). On **AbortError** (timeout), the client **retries once** after a short delay, then may try the next host.
 
-**Failover** (when last Yahoo response was 429 or 401):
-
-`https://stooq.com/q/l/?s={stooqTicker}&f=sd2t2ohlcv&h&e=csv`
-
-- US symbols mapped: `AAPL` → `aapl.us` via `toStooqSymbol`.
+There is **no automatic Stooq (or other) failover** from Yahoo; use the **`stooq`** or **`finnhub`** source separately if Yahoo is unavailable or rate-limited.
 
 ### Request headers
 
-- Browser-like **User-Agent** and **Accept** (Node’s default UA often gets **401/403**).
+Browser-like **User-Agent**, **Accept**, **Accept-Language**, **Referer** (`https://finance.yahoo.com/`), and **Origin** — bare Node defaults often see **401/403/429** more often.
 
 ### Configuration
 
@@ -254,10 +256,13 @@ The endpoint is widely used by open-source tooling; Yahoo may change or throttle
 | --- | ------- | ----------- |
 | `YAHOO_SYMBOLS` | 9 symbols (AAPL, MSFT, … QQQ) | Comma list; uppercased if strings. |
 | `YAHOO_POLL_MS` | `3000` | Poll interval. |
+| `YAHOO_FETCH_TIMEOUT_MS` | `15000` | Per-request HTTP timeout (ms); minimum **5000** if set lower. |
+| `YAHOO_POLL_CONCURRENCY` | `4` | Max symbols polled in parallel per cycle (clamped **1–4**). |
 
 ### Polling behavior
 
-- One **parallel** `Promise.all` over all symbols each cycle.
+- Symbols are fetched in **batches** of up to `YAHOO_POLL_CONCURRENCY` (not one giant `Promise.all` for all symbols).
+- If a poll is still running when the next interval fires, the overlapping run is **skipped** (`_pollInFlight` guard).
 - Uses latest **valid 1m bar close** in the last few slots, or falls back to `meta.regularMarketPrice` / `regularMarketTime`.
 - **Volume**: delta of cumulative bar volume vs previous poll in the **same** bar; new bar sends full bar volume delta logic.
 - **`includePrePost=true`**: extended hours reflected in bar data where Yahoo provides it.
@@ -266,11 +271,11 @@ The endpoint is widely used by open-source tooling; Yahoo may change or throttle
 
 - **`time`**: **`Date.now()`** at poll time — not the bar timestamp — so sub-minute candles get distributed across the minute when aggregating.
 - **`session`**: `sessionForUSEquity(Date.now())` — tied to **poll wall-clock**, not the Yahoo bar’s `timestamp`, so the ET session pill and tick labeling stay aligned with “now” while OHLC still comes from the latest 1m bar close.
-- Status detail may include **`failover: stooq`** when Yahoo throttled and CSV fallback succeeded.
 
 ### Failure modes
 
-- All symbols fail: status **error**, consecutive error count; **429** hints suggest `YAHOO_POLL_MS=10000` or Stooq.
+- All symbols fail: status **error**, consecutive error count. **HTTP 429** is common from cloud/datacenter or aggressive polling; status text suggests slower `YAHOO_POLL_MS`, residential IP, or **Finnhub**.
+- **`fetch failed`**: underlying `cause` (e.g. **ENOTFOUND**, **ETIMEDOUT**) is surfaced in the error message when available.
 - Requires **Node 18+** `global fetch`; otherwise **disabled**.
 
 ### Official reference
@@ -284,12 +289,16 @@ Yahoo does not publish a supported public API for this use; treat as best-effort
 | | |
 | --- | --- |
 | **Class** | `StooqSource` (`server/src/sources/stooq.js`) |
-| **Purpose** | Reliable **HTTP** quotes from environments where Yahoo returns **429** (datacenters, shared egress). |
+| **Purpose** | **HTTP** CSV quotes — opt-in alternative when Yahoo is rate-limited or unsuitable; reliability depends on network path to **stooq.com** (some VPNs/firewalls block or slow it). |
 
 ### Provider
 
 - **Endpoint** (per symbol): `https://stooq.com/q/l/?s={stooqSymbol}&f=sd2t2ohlcv&h&e=csv`
 - **No API key.**
+
+### Request headers
+
+Browser-like **User-Agent**, **Accept**, **Accept-Language**, and **Referer** (`https://stooq.com/`).
 
 ### Configuration
 
@@ -297,6 +306,8 @@ Yahoo does not publish a supported public API for this use; treat as best-effort
 | --- | ------- | ----------- |
 | `STOOQ_SYMBOLS` | 9 US names | Comma list. **Stooq format**: lowercase ticker + market suffix, e.g. `aapl.us`, `msft.us`. Bare `AAPL` normalizes to `aapl.us`. |
 | `STOOQ_POLL_MS` | `5000` | Poll interval. |
+| `STOOQ_FETCH_TIMEOUT_MS` | `25000` | Per-request HTTP timeout (ms); minimum **8000** if set lower. |
+| `STOOQ_POLL_CONCURRENCY` | `3` | Max symbols polled in parallel per cycle (clamped **1–3**). |
 
 ### Symbol rules
 
@@ -305,8 +316,11 @@ Yahoo does not publish a supported public API for this use; treat as best-effort
 
 ### Polling behavior
 
-- **One HTTP request per symbol** in parallel (bulk `?s=a,b` noted as broken in code comments).
+- Symbols are fetched in **batches** of up to `STOOQ_POLL_CONCURRENCY` (not all symbols at once).
+- If a poll is still running when the next interval fires, the overlapping run is **skipped** (`_pollInFlight` guard).
+- **Two attempts** per symbol on **AbortError** (timeout), with a short delay between attempts.
 - Emits a tick **only when Close changes** vs last emit (avoids spamming identical values).
+- Generic Node **`fetch failed`** errors are rewritten to include **`cause`** (e.g. DNS code) when present.
 
 ### Tick semantics
 
@@ -351,6 +365,8 @@ Yahoo does not publish a supported public API for this use; treat as best-effort
 | --- | ------- | ----------- |
 | `FINNHUB_API_KEY` | *(required)* | Free/developer keys available from Finnhub; without it adapter is **disabled**. |
 | `FINNHUB_SYMBOLS` | 7 US equities | Comma list of tickers. |
+
+From the **repository root**, `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` enables `SOURCES=finnhub` with a longer bundled symbol list (see root `package.json` script).
 
 ### Default symbols
 

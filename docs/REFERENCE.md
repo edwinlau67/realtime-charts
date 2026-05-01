@@ -29,6 +29,7 @@ Run from the **repository root** (`realtime-charts/`):
 | -------- | -------- | -------- |
 | Install all | `npm run install:all` | `npm install` in `server/` and `client/`. |
 | Dev server | `npm run dev:server` | Start Express + WebSocket backend (default port **4000**). |
+| Dev server (Finnhub preset) | `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` | Same as dev server with `SOURCES=finnhub` and a bundled `FINNHUB_SYMBOLS` list (see repo `package.json`). |
 | Dev client | `npm run dev:client` | Start Vite + React (default port **5173** with API proxy). |
 | Build client | `npm run build:client` | Production build of the frontend. |
 | Tests | `npm test` | Runs server tests then client tests. |
@@ -54,6 +55,8 @@ Run from the **repository root** (`realtime-charts/`):
 
 All variables are read by `server/src/index.js` and passed into `SourceManager` unless noted.
 
+On startup the server sets **`dns.setDefaultResultOrder("ipv4first")`** so outbound `fetch` calls (Yahoo, Stooq, etc.) prefer IPv4 first and are less likely to hang on broken IPv6 paths.
+
 | Variable | Default | Description |
 | --------- | -------- | ----------- |
 | `PORT` | `4000` | HTTP and WebSocket listen port (WS path `/ws`). |
@@ -65,8 +68,12 @@ All variables are read by `server/src/index.js` and passed into `SourceManager` 
 | `KRAKEN_PAIRS` | *(built-in list)* | Comma list of Kraken pairs, e.g. `BTC/USD,ETH/USD`. |
 | `YAHOO_SYMBOLS` | *(built-in list)* | Comma list of Yahoo symbols, e.g. `AAPL,MSFT,^GSPC,EURUSD=X`. |
 | `YAHOO_POLL_MS` | `3000` | Yahoo HTTP poll period in ms. |
+| `YAHOO_FETCH_TIMEOUT_MS` | `15000` | Per-request Yahoo HTTP timeout in ms (minimum **5000**). |
+| `YAHOO_POLL_CONCURRENCY` | `4` | Max Yahoo symbols polled in parallel per cycle (clamped **1–4**). |
 | `STOOQ_SYMBOLS` | *(built-in list)* | Comma list of Stooq tickers, typically `symbol.us` form. |
 | `STOOQ_POLL_MS` | `5000` | Stooq poll period in ms. |
+| `STOOQ_FETCH_TIMEOUT_MS` | `25000` | Per-request Stooq HTTP timeout in ms (minimum **8000**). |
+| `STOOQ_POLL_CONCURRENCY` | `3` | Max Stooq symbols polled in parallel per cycle (clamped **1–3**). |
 | `FINNHUB_SYMBOLS` | *(built-in list)* | Comma list of US equity symbols for Finnhub. |
 
 ### Source collision policy
@@ -83,7 +90,10 @@ SOURCES=simulated npm run dev:server
 # Add Finnhub (API key required)
 SOURCES=simulated,binance,coinbase,kraken,yahoo,finnhub FINNHUB_API_KEY=xxx npm run dev:server
 
-# Add Stooq for datacenter-friendly equities polling
+# Finnhub-only preset (key required; see package.json for bundled FINNHUB_SYMBOLS)
+FINNHUB_API_KEY=xxx npm run dev:server:finnhub
+
+# Add Stooq for delayed CSV equities (opt-in; network must reach stooq.com)
 SOURCES=simulated,yahoo,stooq npm run dev:server
 ```
 
