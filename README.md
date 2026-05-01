@@ -13,9 +13,10 @@ realtime-charts/
 
 ## Features
 
-- **Pluggable data sources**, selectable at runtime in the UI. Four of them
-  are real, free, public feeds with **no API key, no signup, no payment**
-  required:
+- **Pluggable data sources**, selectable at runtime in the UI. The default
+  `SOURCES` profile includes the **simulator** plus **four** live public feeds
+  with **no API key** (three crypto exchanges + Yahoo). Additional **Stooq** and
+  **Finnhub** feeds are opt-in:
   - **Simulated** — Geometric Brownian Motion synthetic feed (always available).
   - **Binance** — live public crypto trade stream (WebSocket push), USDT-quoted
     pairs (BTC-USDT, ETH-USDT, SOL-USDT, BNB-USDT, XRP-USDT, DOGE-USDT).
@@ -53,10 +54,12 @@ realtime-charts/
 - WebSocket broadcasts of every tick + every candle update (in-progress *and*
   finalized), so the chart's last bar updates live and rolls cleanly at each
   bucket boundary.
-- REST `/api/symbols`, `/api/history`, `/api/health` for bootstrap.
+- REST `/api/sources`, `/api/symbols`, `/api/history`, `/api/health` for bootstrap.
 - Auto-reconnecting WebSocket client with exponential backoff.
 - Watchlist sidebar with live price flashes, interval switcher (1s / 5s / 15s / 1m),
   and OHLCV stat tiles.
+- **Appearance**: **Auto** (follow OS light/dark), **Light**, or **Dark** — persisted in
+  the browser (`localStorage`) and applied via `data-theme` on the document root.
 - **MACD trend analysis** panel synchronized to the price chart's time scale,
   with configurable fast / slow / signal periods (defaults 12 / 26 / 9), live
   histogram coloring (rising vs. fading momentum), and a header trend badge
@@ -65,9 +68,10 @@ realtime-charts/
 - **Pre-market & after-hours session awareness**:
   - Server tags every tick and OHLCV candle with a session label (`pre` /
     `regular` / `post` / `closed`) using a DST-correct ET resolver.
-  - For US-equity sources (Yahoo, Stooq, Finnhub) the session is derived from
-    the trade timestamp; crypto sources (Binance, Coinbase, Kraken) and the
-    simulator are always `regular` (24/7).
+  - For **Stooq** and **Finnhub**, session on each tick follows the quote/trade
+    time. **Yahoo** uses **poll-time** (wall clock) for tick session so sub-minute
+    buckets align with “now” in ET; crypto sources (Binance, Coinbase, Kraken)
+    and the simulator always use `regular` (24/7).
   - Yahoo polls with `includePrePost=true` so pre-market (04:00–09:30 ET) and
     after-hours (16:00–20:00 ET) bars are streamed live as they happen.
   - Finnhub's WebSocket trade stream includes extended-hours trades by default.
@@ -94,6 +98,23 @@ npm run dev:client     # http://localhost:5173
 Open http://localhost:5173. The Vite dev server proxies `/api` and `/ws` to the
 backend, so no CORS or URL config is needed.
 
+### Verification and tests
+
+```bash
+npm test              # server + client unit tests (Vitest on the client)
+npm run verify        # client build, simulated-only server, REST + WS smoke checks
+```
+
+Optional: `VERIFY_PORT=4010 npm run verify` if port **4010** is free (default in the script).
+
+### Documentation
+
+- [docs/README.md](docs/README.md) — index of guides below  
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — using the UI and sessions  
+- [docs/REFERENCE.md](docs/REFERENCE.md) — REST, WebSocket, env vars  
+- [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) — per-feed technical detail  
+- [DESIGN_SPEC.md](DESIGN_SPEC.md) — architecture and release checklist  
+
 ### Environment
 
 Server:
@@ -102,7 +123,7 @@ Server:
 | ------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | `PORT`              | `4000`                               | HTTP + WebSocket port                                                                                  |
 | `TICK_MS`           | `250`                                | Simulator tick cadence (ms). Lower = faster synthetic feed.                                            |
-| `SOURCES`           | `simulated,binance,coinbase,kraken,yahoo` | Comma list of enabled sources: any of `simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `finnhub`. |
+| `SOURCES`           | `simulated,binance,coinbase,kraken,yahoo` | Comma list of enabled sources: `simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `stooq`, `finnhub`. |
 | `FINNHUB_API_KEY`   | *(unset)*                            | Required to enable the Finnhub real-equity feed.                                                       |
 | `BINANCE_PAIRS`     | *(default 6 pairs)*                  | Comma list, e.g. `btcusdt,ethusdt,solusdt`.                                                            |
 | `COINBASE_PRODUCTS` | *(default 6 products)*               | Comma list, e.g. `BTC-USD,ETH-USD,SOL-USD`.                                                            |
@@ -148,10 +169,11 @@ overlapping ticker so there are never two feeds for the same instrument.
 - `GET /api/sources` → `{ sources: [{id, name, status, detail, symbols, available}], enabled }`
 - `GET /api/symbols` → `{ symbols: [{symbol, name, source}], intervals, sources }`
 - `GET /api/history?source=binance&symbol=BTC-USDT&interval=1m&limit=240` →
-  `{ source, symbol, interval, candles: [{time, open, high, low, close, volume}] }`
+  `{ source, symbol, interval, candles: [{time, open, high, low, close, volume, session}] }`
 - `GET /api/health` → `{ ok: true, uptime }`
 
-`time` is a UNIX millisecond timestamp aligned to the bucket start.
+`time` is a UNIX millisecond timestamp aligned to the bucket start. Each candle
+includes a `session` label (`pre` / `regular` / `post` / `closed`) locked at bucket open.
 
 ### WebSocket — `ws://localhost:4000/ws`
 
@@ -159,8 +181,8 @@ Server → client messages:
 
 ```json
 { "type": "hello",         "sources": [...], "symbols": [...], "intervals": [...], "tickIntervalMs": 250 }
-{ "type": "tick",           "source": "binance",  "symbol": "BTC-USDT", "time": 1714510800000, "price": 67212.5, "volume": 4 }
-{ "type": "candle",         "source": "binance",  "symbol": "BTC-USDT", "interval": "1m", "candle": { ... }, "closed": false }
+{ "type": "tick",           "source": "binance",  "symbol": "BTC-USDT", "time": 1714510800000, "price": 67212.5, "volume": 4, "session": "regular" }
+{ "type": "candle",         "source": "binance",  "symbol": "BTC-USDT", "interval": "1m", "candle": { ..., "session": "regular" }, "closed": false }
 { "type": "source-status",  "id": "binance",      "status": "live",     "detail": "6 pairs streaming" }
 ```
 
@@ -170,6 +192,8 @@ Client → server messages:
 { "type": "subscribe", "sources": ["binance"], "symbols": ["BTC-USDT"], "intervals": ["1s","1m"] }
 { "type": "ping" }
 ```
+
+The server may reply with `subscribed` (echo of active filters) or `pong` (to `ping`).
 
 Clients are subscribed to all sources, symbols, and intervals by default; send
 a `subscribe` message to narrow the stream.
