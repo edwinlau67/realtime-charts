@@ -12,7 +12,7 @@ All sources extend `Source` (`server/src/sources/base.js`) and emit:
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `source` | `string` | Adapter id: `simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `stooq`, `finnhub`. |
+| `source` | `string` | Adapter id: `simulated`, `binance`, `coinbase`, `kraken`, `okx`, `yahoo`, `stooq`, `finnhub`, `alpaca`, `twelvedata`. |
 | `symbol` | `string` | Canonical symbol for this app (may differ from exchange-native id). |
 | `time` | `number` | Epoch **milliseconds**. Semantics vary by source (trade time vs poll time — see each section). |
 | `price` | `number` | Last trade price or best available quote-derived value. |
@@ -44,6 +44,9 @@ Emitted via `setStatus(status, detail)`:
 | `yahoo` | HTTP polling | No | Yes | `sessionForUSEquity(time)` using **poll-time** `Date.now()` |
 | `stooq` | HTTP polling | No | No (opt-in) | `sessionForUSEquity(bar time)` |
 | `finnhub` | WebSocket | Yes (`FINNHUB_API_KEY`) | No (opt-in) | `sessionForUSEquity(trade time)` |
+| `okx` | WebSocket | No | No (opt-in) | `regular` |
+| `alpaca` | WebSocket | Yes (`ALPACA_API_KEY` + `ALPACA_API_SECRET`) | No (opt-in) | `sessionForUSEquity(trade time)` |
+| `twelvedata` | WebSocket | Yes (`TWELVE_DATA_API_KEY`) | No (opt-in) | `sessionForUSEquity(trade time)` or `regular` for forex |
 
 ---
 
@@ -394,6 +397,145 @@ AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA.
 
 ---
 
+## `okx` — Public trade stream
+
+| | |
+| --- | --- |
+| **Class** | `OkxSource` (`server/src/sources/okx.js`) |
+| **Purpose** | Live crypto **trades**, USDT spot pairs. |
+
+### Provider documentation
+
+- [OKX WebSocket — Subscribe](https://www.okx.com/docs-v5/en/#overview-websocket-subscribe)
+
+### Connection
+
+- **URL**: `wss://ws.okx.com:8443/ws/v5/public`
+- **Subscribe** (on open): `{ op: "subscribe", args: [{ channel: "trades", instId: "BTC-USDT" }, ...] }`
+
+### Configuration
+
+| Env | Default | Description |
+| --- | ------- | ----------- |
+| `OKX_INSTRUMENTS` | Built-in 4 pairs | Comma-separated OKX instrument ids (e.g. `BTC-USDT,ETH-USDT`). |
+
+### Default instruments
+
+`BTC-USDT`, `ETH-USDT`, `SOL-USDT`, `XRP-USDT`.
+
+### Symbol exposure (collision avoidance)
+
+Each OKX symbol is published as **`{instId}-O`** (e.g. `BTC-USDT-O`) to avoid colliding with Binance's `BTC-USDT`.
+
+### Tick mapping
+
+- `time`: `t` field (epoch ms) or `Date.now()`.
+- `price`: `px`; `volume`: `sz` × **10⁴** rounded (min 1).
+- `session`: `regular`.
+
+### Heartbeat
+
+OKX closes idle connections after ~30 s without traffic. The adapter sends a plain-string **`"ping"`** every **25 s**; the server responds with `"pong"` (handled by skipping the string before JSON parse).
+
+### Resilience
+
+- Exponential backoff reconnect (max 30 s); heartbeat cleared on close.
+
+---
+
+## `alpaca` — IEX trade stream
+
+| | |
+| --- | --- |
+| **Class** | `AlpacaSource` (`server/src/sources/alpaca.js`) |
+| **Purpose** | Live **US equity trades** via Alpaca's IEX feed (free paper account). |
+
+### Provider documentation
+
+- [Alpaca WebSocket Streaming — Real-time Trades](https://docs.alpaca.markets/reference/websocket-streaming)
+
+### Connection
+
+- **URL**: `wss://stream.data.alpaca.markets/v2/iex`
+- **Two-step auth**: send `{ action: "auth", key, secret }` on open; subscribe only after receiving `{ T: "success", msg: "authenticated" }`. Subscribing before the ack results in a silent drop.
+- **Subscribe**: `{ action: "subscribe", trades: ["AAPL", ...] }`
+
+### Configuration
+
+| Env | Default | Description |
+| --- | ------- | ----------- |
+| `ALPACA_API_KEY` | *(required)* | Free paper-account key from Alpaca; without it adapter is **disabled**. |
+| `ALPACA_API_SECRET` | *(required)* | Corresponding paper-account secret. |
+| `ALPACA_SYMBOLS` | 9 US equities/ETFs | Comma list of tickers. |
+
+### Default symbols
+
+AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, SPY, QQQ.
+
+### Tick mapping
+
+- `time`: `t` (ISO string → `Date.parse`) or `Date.now()`.
+- `symbol`: `S`; `price`: `p`; `volume`: `s` rounded (min 1).
+- `session`: `sessionForUSEquity(time)`.
+
+### Availability
+
+- `start()` no-ops with status **disabled** if either key is missing.
+
+### Resilience
+
+- Exponential backoff reconnect (max 30 s).
+
+---
+
+## `twelvedata` — WebSocket quotes
+
+| | |
+| --- | --- |
+| **Class** | `TwelveDataSource` (`server/src/sources/twelvedata.js`) |
+| **Purpose** | Live **US equities + forex** (push stream). Free tier: max **8** concurrent symbols. |
+
+### Provider documentation
+
+- [Twelve Data WebSocket](https://twelvedata.com/docs#websocket)
+
+### Connection
+
+- **URL**: `wss://ws.twelvedata.com/v1/quotes/price?apikey={TWELVE_DATA_API_KEY}`
+- **Subscribe** (on open): `{ action: "subscribe", params: { symbols: "AAPL,EUR/USD,..." } }`
+
+### Configuration
+
+| Env | Default | Description |
+| --- | ------- | ----------- |
+| `TWELVE_DATA_API_KEY` | *(required)* | Free key from Twelve Data; without it adapter is **disabled**. |
+| `TWELVE_DATA_SYMBOLS` | 8 symbols | Comma list of mixed equity + forex symbols. Free tier cap: **8** concurrent. |
+
+### Default symbols
+
+AAPL, MSFT, GOOGL, AMZN, NVDA (equities), EUR/USD, GBP/USD, USD/JPY (forex).
+
+### Tick mapping
+
+- Message: `event === "price"`.
+- `time`: `timestamp` (Unix **seconds** → ms; Twelve Data uses seconds, not ms).
+- `symbol`: `symbol`; `price`: `price`; `volume`: `day_volume` rounded (min 1).
+- `session`: `regular` for forex symbols (detected by `/` in symbol), `sessionForUSEquity(time)` for equities.
+
+### Heartbeat quirk
+
+The server sends `{ event: "heartbeat" }` every ~10 s. The adapter **echoes it back** unchanged; missing heartbeats cause a silent disconnect after ~30 s.
+
+### Availability
+
+- `start()` no-ops with status **disabled** if key missing.
+
+### Resilience
+
+- Exponential backoff reconnect (max 30 s).
+
+---
+
 ## Source orchestration (`SourceManager`)
 
 File: `server/src/sources/manager.js`.
@@ -401,11 +543,11 @@ File: `server/src/sources/manager.js`.
 ### Enable list
 
 Environment variable **`SOURCES`**: comma-separated subset of  
-`simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `stooq`, `finnhub`.
+`simulated`, `binance`, `coinbase`, `kraken`, `okx`, `yahoo`, `stooq`, `finnhub`, `alpaca`, `twelvedata`.
 
 ### Start order
 
-1. Real adapters (binance → coinbase → kraken → yahoo → stooq → finnhub) in fixed code order.
+1. Real adapters (binance → coinbase → kraken → okx → yahoo → stooq → finnhub → alpaca → twelvedata) in fixed code order.
 2. **Simulated** last, with `excludeSymbols` = all `symbol` strings from prior sources’ `getSymbols()`.
 
 ### Collision policy

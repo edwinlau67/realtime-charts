@@ -30,6 +30,9 @@ Run from the **repository root** (`realtime-charts/`):
 | Install all | `npm run install:all` | `npm install` in `server/` and `client/`. |
 | Dev server | `npm run dev:server` | Start Express + WebSocket backend (default port **4000**). |
 | Dev server (Finnhub preset) | `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` | Same as dev server with `SOURCES=finnhub` and a bundled `FINNHUB_SYMBOLS` list (see repo `package.json`). |
+| Dev server (Alpaca preset) | `ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca` | `SOURCES=alpaca` with placeholder keys (replace with real paper-account credentials). |
+| Dev server (Twelve Data preset) | `TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata` | `SOURCES=twelvedata` with placeholder key. |
+| Dev server (OKX preset) | `npm run dev:server:okx` | `SOURCES=okx` (no key required). |
 | Dev client | `npm run dev:client` | Start Vite + React (default port **5173** with API proxy). |
 | Build client | `npm run build:client` | Production build of the frontend. |
 | Tests | `npm test` | Runs server tests then client tests. |
@@ -61,7 +64,7 @@ On startup the server sets **`dns.setDefaultResultOrder("ipv4first")`** so outbo
 | --------- | -------- | ----------- |
 | `PORT` | `4000` | HTTP and WebSocket listen port (WS path `/ws`). |
 | `TICK_MS` | `250` | Simulator tick interval in milliseconds (**only** the synthetic GBM source). |
-| `SOURCES` | `simulated,binance,coinbase,kraken,yahoo` | Comma-separated list of source ids to enable. Allowed tokens: `simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `stooq`, `finnhub`. Order does not determine priority; symbol collision rules apply (see below). |
+| `SOURCES` | `simulated,binance,coinbase,kraken,yahoo` | Comma-separated list of source ids to enable. Allowed tokens: `simulated`, `binance`, `coinbase`, `kraken`, `okx`, `yahoo`, `stooq`, `finnhub`, `alpaca`, `twelvedata`. Order does not determine priority; symbol collision rules apply (see below). |
 | `FINNHUB_API_KEY` | *(empty)* | Required for Finnhub to connect. Without a key the adapter reports **disabled** and does not open a socket; configured symbols may still appear in `/api/symbols` but will not receive ticks. |
 | `BINANCE_PAIRS` | *(built-in list)* | Comma list of Binance **lowercase** stream ids, e.g. `btcusdt,ethusdt`. |
 | `COINBASE_PRODUCTS` | *(built-in list)* | Comma list of Coinbase **product** ids, e.g. `BTC-USD,ETH-USD`. |
@@ -75,6 +78,12 @@ On startup the server sets **`dns.setDefaultResultOrder("ipv4first")`** so outbo
 | `STOOQ_FETCH_TIMEOUT_MS` | `25000` | Per-request Stooq HTTP timeout in ms (minimum **8000**). |
 | `STOOQ_POLL_CONCURRENCY` | `3` | Max Stooq symbols polled in parallel per cycle (clamped **1–3**). |
 | `FINNHUB_SYMBOLS` | *(built-in list)* | Comma list of US equity symbols for Finnhub. |
+| `OKX_INSTRUMENTS` | *(built-in list)* | Comma list of OKX instrument ids, e.g. `BTC-USDT,ETH-USDT`. |
+| `ALPACA_API_KEY` | *(empty)* | Required for Alpaca to connect (paper-account key). |
+| `ALPACA_API_SECRET` | *(empty)* | Required for Alpaca to connect (paper-account secret). |
+| `ALPACA_SYMBOLS` | *(built-in list)* | Comma list of US equity symbols for Alpaca, e.g. `AAPL,MSFT,SPY`. |
+| `TWELVE_DATA_API_KEY` | *(empty)* | Required for Twelve Data to connect. |
+| `TWELVE_DATA_SYMBOLS` | *(built-in list)* | Comma list of symbols for Twelve Data (max 8 on free tier), e.g. `AAPL,MSFT,EUR/USD`. |
 
 ### Source collision policy
 
@@ -95,6 +104,15 @@ FINNHUB_API_KEY=xxx npm run dev:server:finnhub
 
 # Add Stooq for delayed CSV equities (opt-in; network must reach stooq.com)
 SOURCES=simulated,yahoo,stooq npm run dev:server
+
+# OKX crypto (no key)
+SOURCES=okx npm run dev:server
+
+# Alpaca live US equities (API key pair required)
+ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca
+
+# Twelve Data stocks + forex (API key required; max 8 symbols on free tier)
+TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata
 ```
 
 ---
@@ -112,6 +130,9 @@ Full specifications for each adapter (endpoints, reconnection, symbol mapping, v
 | `yahoo` | `sources/yahoo.js` | HTTP poll | `YAHOO_SYMBOLS`, `YAHOO_POLL_MS` |
 | `stooq` | `sources/stooq.js` | HTTP poll | `STOOQ_SYMBOLS`, `STOOQ_POLL_MS` |
 | `finnhub` | `sources/finnhub.js` | WebSocket | `FINNHUB_API_KEY`, `FINNHUB_SYMBOLS` |
+| `okx` | `sources/okx.js` | WebSocket | `OKX_INSTRUMENTS` |
+| `alpaca` | `sources/alpaca.js` | WebSocket | `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `ALPACA_SYMBOLS` |
+| `twelvedata` | `sources/twelvedata.js` | WebSocket | `TWELVE_DATA_API_KEY`, `TWELVE_DATA_SYMBOLS` |
 
 ---
 

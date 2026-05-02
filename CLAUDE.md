@@ -15,6 +15,9 @@ npm run install:all          # install server + client deps
 # Development (run in separate terminals)
 npm run dev:server            # server on :4000 (default: simulated + binance + coinbase + kraken + yahoo)
 npm run dev:server:finnhub    # server with Finnhub preset — requires FINNHUB_API_KEY=xxx
+npm run dev:server:alpaca     # server with Alpaca preset — requires ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx
+npm run dev:server:twelvedata # server with Twelve Data preset — requires TWELVE_DATA_API_KEY=xxx
+npm run dev:server:okx        # server with OKX only (no key)
 npm run dev:client            # Vite dev server on :5173
 
 # Tests
@@ -58,9 +61,12 @@ To add a new source: subclass `base.js`, emit ticks, register in `manager.js`.
 | `binance` | WS push | no |
 | `coinbase` | WS push | no |
 | `kraken` | WS push | no |
+| `okx` | WS push | no |
 | `yahoo` | HTTP poll (3 s) | no |
 | `stooq` | HTTP poll (5 s) | no |
-| `finnhub` | WS push | yes (`FINNHUB_APIKEY`) |
+| `finnhub` | WS push | yes (`FINNHUB_API_KEY`) |
+| `alpaca` | WS push | yes (`ALPACA_API_KEY` + `ALPACA_API_SECRET`) |
+| `twelvedata` | WS push | yes (`TWELVE_DATA_API_KEY`) |
 
 Active adapters are controlled by the `SOURCES` env var (default: `simulated,binance,coinbase,kraken,yahoo`).
 

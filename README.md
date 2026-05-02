@@ -49,6 +49,20 @@ realtime-charts/
   - **Finnhub** *(opt-in)* — live US equities trade stream (WebSocket push).
     Free tier with a free API key (set `FINNHUB_API_KEY`). Recommended when
     Yahoo returns **429**; repo preset: `FINNHUB_API_KEY=xxx npm run dev:server:finnhub`.
+  - **OKX** *(opt-in)* — live crypto trade stream (WebSocket push), USDT-quoted
+    pairs (BTC-USDT-O, ETH-USDT-O, SOL-USDT-O, XRP-USDT-O). Symbols carry a
+    `-O` suffix to avoid collision with Binance's `BTC-USDT`. Requires a
+    plain-string ping every 25 s (handled automatically). *No key.*
+  - **Alpaca** *(opt-in)* — live US equities trade stream via Alpaca's IEX feed
+    (WebSocket push). Requires a free paper-account API key pair (`ALPACA_API_KEY`
+    + `ALPACA_API_SECRET`). Two-step auth: send credentials on open, subscribe
+    only after receiving the `authenticated` acknowledgement. Default symbols:
+    AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, SPY, QQQ.
+  - **Twelve Data** *(opt-in)* — live US equities + forex (WebSocket push). Free
+    tier supports up to 8 concurrent symbols (set `TWELVE_DATA_API_KEY`). Must
+    echo server heartbeats back or the connection drops silently. Supports mixed
+    equity + forex symbols (e.g. `AAPL,EUR/USD`). Default symbols: AAPL, MSFT,
+    GOOGL, AMZN, NVDA, EUR/USD, GBP/USD, USD/JPY.
 - 8 simulated tickers driven by per-symbol Geometric Brownian Motion when no
   real source claims them (drift + volatility).
 - Tick stream at configurable cadence (default **250 ms** for the simulator;
@@ -127,8 +141,14 @@ Server:
 | ------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | `PORT`              | `4000`                               | HTTP + WebSocket port                                                                                  |
 | `TICK_MS`           | `250`                                | Simulator tick cadence (ms). Lower = faster synthetic feed.                                            |
-| `SOURCES`           | `simulated,binance,coinbase,kraken,yahoo` | Comma list of enabled sources: `simulated`, `binance`, `coinbase`, `kraken`, `yahoo`, `stooq`, `finnhub`. |
+| `SOURCES`           | `simulated,binance,coinbase,kraken,yahoo` | Comma list of enabled sources: `simulated`, `binance`, `coinbase`, `kraken`, `okx`, `yahoo`, `stooq`, `finnhub`, `alpaca`, `twelvedata`. |
 | `FINNHUB_API_KEY`   | *(unset)*                            | Required to enable the Finnhub real-equity feed.                                                       |
+| `ALPACA_API_KEY`    | *(unset)*                            | Required to enable the Alpaca feed (paper account key).                                                |
+| `ALPACA_API_SECRET` | *(unset)*                            | Required to enable the Alpaca feed (paper account secret).                                             |
+| `ALPACA_SYMBOLS`    | *(default 9 stocks/ETFs)*            | Comma list, e.g. `AAPL,MSFT,SPY`.                                                                     |
+| `TWELVE_DATA_API_KEY` | *(unset)*                          | Required to enable the Twelve Data feed.                                                               |
+| `TWELVE_DATA_SYMBOLS` | *(default 8 stocks/forex)*         | Comma list, e.g. `AAPL,MSFT,EUR/USD` (max 8 on free tier).                                            |
+| `OKX_INSTRUMENTS`   | *(default 4 pairs)*                  | Comma list of OKX instrument ids, e.g. `BTC-USDT,ETH-USDT`.                                           |
 | `BINANCE_PAIRS`     | *(default 6 pairs)*                  | Comma list, e.g. `btcusdt,ethusdt,solusdt`.                                                            |
 | `COINBASE_PRODUCTS` | *(default 6 products)*               | Comma list, e.g. `BTC-USD,ETH-USD,SOL-USD`.                                                            |
 | `KRAKEN_PAIRS`      | *(default 6 pairs)*                  | Comma list, e.g. `BTC/USD,ETH/USD,SOL/USD`.                                                            |
@@ -162,6 +182,15 @@ SOURCES=stooq STOOQ_SYMBOLS=aapl.us,msft.us,googl.us,spy.us,qqq.us npm run dev:s
 
 # recommended: stable real-time US stocks via Finnhub (API key required; bundled FINNHUB_SYMBOLS in package.json)
 FINNHUB_API_KEY=xxx npm run dev:server:finnhub
+
+# OKX crypto (no key)
+npm run dev:server:okx
+
+# Alpaca live US equities (API key pair required)
+ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca
+
+# Twelve Data stocks + forex (API key required; max 8 symbols on free tier)
+TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata
 
 # both stock sources side-by-side for comparison
 SOURCES=simulated,yahoo,stooq npm run dev:server
@@ -213,7 +242,7 @@ a `subscribe` message to narrow the stream.
 
 - The server primes ~5 minutes of synthetic history at startup so charts have
   context immediately on first connect.
-- Adding another real feed (Polygon, Alpaca, Coinbase, Kraken, …) is a small,
-  self-contained change: drop a new `Source` subclass under `server/src/sources/`
-  that emits `{ source, symbol, time, price, volume }` ticks, register it in
-  `manager.js`, and the aggregator + WebSocket protocol pick it up unchanged.
+- Adding another real feed (Polygon, …) is a small, self-contained change: drop
+  a new `Source` subclass under `server/src/sources/` that emits
+  `{ source, symbol, time, price, volume }` ticks, register it in `manager.js`,
+  and the aggregator + WebSocket protocol pick it up unchanged.
