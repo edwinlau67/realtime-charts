@@ -33,6 +33,15 @@ const stooqSymbols = (process.env.STOOQ_SYMBOLS || "")
 const stooqPollMs = Number(process.env.STOOQ_POLL_MS || 5000);
 const finnhubSymbols = (process.env.FINNHUB_SYMBOLS || "")
   .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+const alpacaApiKey    = process.env.ALPACA_API_KEY    || "";
+const alpacaApiSecret = process.env.ALPACA_API_SECRET || "";
+const alpacaSymbols   = (process.env.ALPACA_SYMBOLS || "")
+  .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+const twelveDataApiKey  = process.env.TWELVE_DATA_API_KEY || "";
+const twelveDataSymbols = (process.env.TWELVE_DATA_SYMBOLS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+const okxInstruments = (process.env.OKX_INSTRUMENTS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
 
 const app = express();
 app.use(cors());
@@ -47,11 +56,17 @@ const manager = new SourceManager({
   binancePairs,
   coinbaseProducts,
   krakenPairs,
+  okxInstruments,
   yahooSymbols,
   yahooPollMs,
   stooqSymbols,
   stooqPollMs,
   finnhubSymbols,
+  alpacaApiKey,
+  alpacaApiSecret,
+  alpacaSymbols,
+  twelveDataApiKey,
+  twelveDataSymbols,
 });
 const agg = new CandleAggregator();
 

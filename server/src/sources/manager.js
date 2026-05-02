@@ -3,9 +3,12 @@ import { SimulatedSource } from "./simulated.js";
 import { BinanceSource }   from "./binance.js";
 import { CoinbaseSource }  from "./coinbase.js";
 import { KrakenSource }    from "./kraken.js";
+import { OkxSource }       from "./okx.js";
 import { YahooSource }     from "./yahoo.js";
 import { StooqSource }     from "./stooq.js";
 import { FinnhubSource }   from "./finnhub.js";
+import { AlpacaSource }    from "./alpaca.js";
+import { TwelveDataSource } from "./twelvedata.js";
 
 // Builds and orchestrates the configured set of data sources. Resolves symbol
 // collisions deterministically: a real feed always wins over the simulator.
@@ -14,13 +17,15 @@ import { FinnhubSource }   from "./finnhub.js";
 //
 // Configuration (env):
 //   SOURCES                comma list of any of: simulated, binance, coinbase,
-//                          kraken, yahoo, stooq, finnhub. Default: all zero-key
-//                          sources except stooq and finnhub (stooq/finnhub are opt-in).
+//                          kraken, okx, yahoo, stooq, finnhub, alpaca, twelvedata.
+//                          Default: all zero-key sources except stooq, finnhub,
+//                          alpaca, twelvedata (those are opt-in).
 //   TICK_MS                simulator tick cadence (default 250)
 //   FINNHUB_API_KEY        required to enable Finnhub
 //   BINANCE_PAIRS          comma list, e.g. "btcusdt,ethusdt"
 //   COINBASE_PRODUCTS      comma list, e.g. "BTC-USD,ETH-USD"
 //   KRAKEN_PAIRS           comma list, e.g. "BTC/USD,ETH/USD"
+//   OKX_INSTRUMENTS        comma list, e.g. "BTC-USDT,ETH-USDT"
 //   YAHOO_SYMBOLS          comma list, e.g. "AAPL,MSFT,SPY,^GSPC,EURUSD=X"
 //   YAHOO_POLL_MS          poll cadence for Yahoo (default 3000)
 //   YAHOO_FETCH_TIMEOUT_MS outbound timeout per Yahoo request (default 15000)
@@ -30,14 +35,21 @@ import { FinnhubSource }   from "./finnhub.js";
 //   STOOQ_FETCH_TIMEOUT_MS per-request timeout (default 25000)
 //   STOOQ_POLL_CONCURRENCY max parallel symbols per poll (default 3)
 //   FINNHUB_SYMBOLS        comma list, e.g. "AAPL,MSFT"
+//   ALPACA_API_KEY         required to enable Alpaca
+//   ALPACA_API_SECRET      required to enable Alpaca
+//   ALPACA_SYMBOLS         comma list, e.g. "AAPL,MSFT,SPY"
+//   TWELVE_DATA_API_KEY    required to enable Twelve Data
+//   TWELVE_DATA_SYMBOLS    comma list, e.g. "AAPL,MSFT,EUR/USD" (max 8 on free tier)
 export class SourceManager extends EventEmitter {
   constructor({
     enabled, tickIntervalMs,
     finnhubApiKey,
-    binancePairs, coinbaseProducts, krakenPairs,
+    binancePairs, coinbaseProducts, krakenPairs, okxInstruments,
     yahooSymbols, yahooPollMs,
     stooqSymbols, stooqPollMs,
     finnhubSymbols,
+    alpacaApiKey, alpacaApiSecret, alpacaSymbols,
+    twelveDataApiKey, twelveDataSymbols,
   }) {
     super();
     this.tickIntervalMs = tickIntervalMs;
@@ -61,6 +73,11 @@ export class SourceManager extends EventEmitter {
       this._wire(src);
       this._sources.push(src);
     }
+    if (wanted.has("okx")) {
+      const src = new OkxSource({ instruments: okxInstruments });
+      this._wire(src);
+      this._sources.push(src);
+    }
     if (wanted.has("yahoo")) {
       const src = new YahooSource({ symbols: yahooSymbols, pollIntervalMs: yahooPollMs });
       this._wire(src);
@@ -73,6 +90,16 @@ export class SourceManager extends EventEmitter {
     }
     if (wanted.has("finnhub")) {
       const src = new FinnhubSource({ apiKey: finnhubApiKey, symbols: finnhubSymbols });
+      this._wire(src);
+      this._sources.push(src);
+    }
+    if (wanted.has("alpaca")) {
+      const src = new AlpacaSource({ apiKey: alpacaApiKey, apiSecret: alpacaApiSecret, symbols: alpacaSymbols });
+      this._wire(src);
+      this._sources.push(src);
+    }
+    if (wanted.has("twelvedata")) {
+      const src = new TwelveDataSource({ apiKey: twelveDataApiKey, symbols: twelveDataSymbols });
       this._wire(src);
       this._sources.push(src);
     }
