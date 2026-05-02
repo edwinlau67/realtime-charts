@@ -47,22 +47,22 @@ realtime-charts/
     Reachability depends on your network (some VPNs/firewalls block or slow
     **stooq.com**). *No key.*
   - **Finnhub** *(opt-in)* — live US equities trade stream (WebSocket push).
-    Free tier with a free API key (set `FINNHUB_API_KEY`). Recommended when
-    Yahoo returns **429**; repo preset: `FINNHUB_API_KEY=xxx npm run dev:server:finnhub`.
+    Free tier with a free API key. Set `FINNHUB_API_KEY` in `.env`, then run
+    `npm run dev:server:finnhub`. Recommended when Yahoo returns **429**.
   - **OKX** *(opt-in)* — live crypto trade stream (WebSocket push), USDT-quoted
     pairs (BTC-USDT-O, ETH-USDT-O, SOL-USDT-O, XRP-USDT-O). Symbols carry a
     `-O` suffix to avoid collision with Binance's `BTC-USDT`. Requires a
     plain-string ping every 25 s (handled automatically). *No key.*
   - **Alpaca** *(opt-in)* — live US equities trade stream via Alpaca's IEX feed
-    (WebSocket push). Requires a free paper-account API key pair (`ALPACA_API_KEY`
-    + `ALPACA_API_SECRET`). Two-step auth: send credentials on open, subscribe
-    only after receiving the `authenticated` acknowledgement. Default symbols:
-    AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, SPY, QQQ.
+    (WebSocket push). Requires a free paper-account key pair — set
+    `ALPACA_API_KEY` + `ALPACA_API_SECRET` in `.env`, then run
+    `npm run dev:server:alpaca`. Default symbols: AAPL, MSFT, GOOGL, AMZN, NVDA,
+    META, TSLA, SPY, QQQ.
   - **Twelve Data** *(opt-in)* — live US equities + forex (WebSocket push). Free
-    tier supports up to 8 concurrent symbols (set `TWELVE_DATA_API_KEY`). Must
-    echo server heartbeats back or the connection drops silently. Supports mixed
-    equity + forex symbols (e.g. `AAPL,EUR/USD`). Default symbols: AAPL, MSFT,
-    GOOGL, AMZN, NVDA, EUR/USD, GBP/USD, USD/JPY.
+    tier supports up to 8 concurrent symbols. Set `TWELVE_DATA_API_KEY` in
+    `.env`, then run `npm run dev:server:twelvedata`. Supports mixed equity +
+    forex symbols (e.g. `AAPL,EUR/USD`). Default symbols: AAPL, MSFT, GOOGL,
+    AMZN, NVDA, EUR/USD, GBP/USD, USD/JPY.
 - 8 simulated tickers driven by per-symbol Geometric Brownian Motion when no
   real source claims them (drift + volatility).
 - Tick stream at configurable cadence (default **250 ms** for the simulator;
@@ -106,10 +106,13 @@ realtime-charts/
 # 1) install
 npm run install:all
 
-# 2) start the server (in one terminal)
+# 2) (optional) configure API keys — only needed for Finnhub / Alpaca / Twelve Data
+cp .env.example .env   # then edit .env and fill in your keys
+
+# 3) start the server (in one terminal)
 npm run dev:server     # http://localhost:4000
 
-# 3) start the client (in another terminal)
+# 4) start the client (in another terminal)
 npm run dev:client     # http://localhost:5173
 ```
 
@@ -180,23 +183,23 @@ SOURCES=yahoo YAHOO_SYMBOLS=^GSPC,^DJI,^IXIC,EURUSD=X,GBPUSD=X,GC=F npm run dev:
 # real stocks via Stooq (works from any IP including datacenters; ~15min delay)
 SOURCES=stooq STOOQ_SYMBOLS=aapl.us,msft.us,googl.us,spy.us,qqq.us npm run dev:server
 
-# recommended: stable real-time US stocks via Finnhub (API key required; bundled FINNHUB_SYMBOLS in package.json)
-FINNHUB_API_KEY=xxx npm run dev:server:finnhub
+# recommended: stable real-time US stocks via Finnhub (FINNHUB_API_KEY in .env; bundled FINNHUB_SYMBOLS)
+npm run dev:server:finnhub
 
 # OKX crypto (no key)
 npm run dev:server:okx
 
-# Alpaca live US equities (API key pair required)
-ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca
+# Alpaca live US equities (ALPACA_API_KEY + ALPACA_API_SECRET in .env)
+npm run dev:server:alpaca
 
-# Twelve Data stocks + forex (API key required; max 8 symbols on free tier)
-TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata
+# Twelve Data stocks + forex (TWELVE_DATA_API_KEY in .env; max 8 symbols on free tier)
+npm run dev:server:twelvedata
 
 # both stock sources side-by-side for comparison
 SOURCES=simulated,yahoo,stooq npm run dev:server
 
-# everything: every free feed + real Finnhub equities (key required)
-SOURCES=simulated,binance,coinbase,kraken,yahoo,finnhub FINNHUB_API_KEY=xxx npm run dev:server
+# everything: every free feed + real Finnhub equities (FINNHUB_API_KEY in .env)
+SOURCES=simulated,binance,coinbase,kraken,yahoo,finnhub npm run dev:server
 ```
 
 When a real source claims a symbol, the simulator automatically drops the

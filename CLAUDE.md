@@ -14,9 +14,9 @@ npm run install:all          # install server + client deps
 
 # Development (run in separate terminals)
 npm run dev:server            # server on :4000 (default: simulated + binance + coinbase + kraken + yahoo)
-npm run dev:server:finnhub    # server with Finnhub preset — requires FINNHUB_API_KEY=xxx
-npm run dev:server:alpaca     # server with Alpaca preset — requires ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx
-npm run dev:server:twelvedata # server with Twelve Data preset — requires TWELVE_DATA_API_KEY=xxx
+npm run dev:server:finnhub    # server with Finnhub preset — requires FINNHUB_API_KEY in .env
+npm run dev:server:alpaca     # server with Alpaca preset — requires ALPACA_API_KEY + ALPACA_API_SECRET in .env
+npm run dev:server:twelvedata # server with Twelve Data preset — requires TWELVE_DATA_API_KEY in .env
 npm run dev:server:okx        # server with OKX only (no key)
 npm run dev:client            # Vite dev server on :5173
 

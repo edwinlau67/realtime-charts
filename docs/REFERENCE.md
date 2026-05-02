@@ -29,9 +29,9 @@ Run from the **repository root** (`realtime-charts/`):
 | -------- | -------- | -------- |
 | Install all | `npm run install:all` | `npm install` in `server/` and `client/`. |
 | Dev server | `npm run dev:server` | Start Express + WebSocket backend (default port **4000**). |
-| Dev server (Finnhub preset) | `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` | Same as dev server with `SOURCES=finnhub` and a bundled `FINNHUB_SYMBOLS` list (see repo `package.json`). |
-| Dev server (Alpaca preset) | `ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca` | `SOURCES=alpaca` with placeholder keys (replace with real paper-account credentials). |
-| Dev server (Twelve Data preset) | `TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata` | `SOURCES=twelvedata` with placeholder key. |
+| Dev server (Finnhub preset) | `npm run dev:server:finnhub` | Same as dev server with `SOURCES=finnhub` and a bundled `FINNHUB_SYMBOLS` list. Requires `FINNHUB_API_KEY` in `.env`. |
+| Dev server (Alpaca preset) | `npm run dev:server:alpaca` | `SOURCES=alpaca`. Requires `ALPACA_API_KEY` + `ALPACA_API_SECRET` in `.env`. |
+| Dev server (Twelve Data preset) | `npm run dev:server:twelvedata` | `SOURCES=twelvedata`. Requires `TWELVE_DATA_API_KEY` in `.env`. |
 | Dev server (OKX preset) | `npm run dev:server:okx` | `SOURCES=okx` (no key required). |
 | Dev client | `npm run dev:client` | Start Vite + React (default port **5173** with API proxy). |
 | Build client | `npm run build:client` | Production build of the frontend. |
@@ -57,6 +57,8 @@ Run from the **repository root** (`realtime-charts/`):
 ## Server configuration (environment variables)
 
 All variables are read by `server/src/index.js` and passed into `SourceManager` unless noted.
+
+**API key setup**: copy `.env.example` (repo root) to `.env`, fill in your keys. The server loads `.env` automatically via `--env-file-if-exists`; the file is git-ignored. Inline env vars on the command line still override `.env` values when needed.
 
 On startup the server sets **`dns.setDefaultResultOrder("ipv4first")`** so outbound `fetch` calls (Yahoo, Stooq, etc.) prefer IPv4 first and are less likely to hang on broken IPv6 paths.
 
@@ -96,11 +98,11 @@ On startup the server sets **`dns.setDefaultResultOrder("ipv4first")`** so outbo
 # Synthetic only, no external APIs
 SOURCES=simulated npm run dev:server
 
-# Add Finnhub (API key required)
-SOURCES=simulated,binance,coinbase,kraken,yahoo,finnhub FINNHUB_API_KEY=xxx npm run dev:server
+# Add Finnhub (FINNHUB_API_KEY must be set in .env)
+SOURCES=simulated,binance,coinbase,kraken,yahoo,finnhub npm run dev:server
 
-# Finnhub-only preset (key required; see package.json for bundled FINNHUB_SYMBOLS)
-FINNHUB_API_KEY=xxx npm run dev:server:finnhub
+# Finnhub-only preset (FINNHUB_API_KEY in .env; includes bundled FINNHUB_SYMBOLS)
+npm run dev:server:finnhub
 
 # Add Stooq for delayed CSV equities (opt-in; network must reach stooq.com)
 SOURCES=simulated,yahoo,stooq npm run dev:server
@@ -108,11 +110,11 @@ SOURCES=simulated,yahoo,stooq npm run dev:server
 # OKX crypto (no key)
 SOURCES=okx npm run dev:server
 
-# Alpaca live US equities (API key pair required)
-ALPACA_API_KEY=xxx ALPACA_API_SECRET=xxx npm run dev:server:alpaca
+# Alpaca live US equities (ALPACA_API_KEY + ALPACA_API_SECRET in .env)
+npm run dev:server:alpaca
 
-# Twelve Data stocks + forex (API key required; max 8 symbols on free tier)
-TWELVE_DATA_API_KEY=xxx npm run dev:server:twelvedata
+# Twelve Data stocks + forex (TWELVE_DATA_API_KEY in .env; max 8 symbols on free tier)
+npm run dev:server:twelvedata
 ```
 
 ---

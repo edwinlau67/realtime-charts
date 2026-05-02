@@ -369,7 +369,7 @@ Browser-like **User-Agent**, **Accept**, **Accept-Language**, and **Referer** (`
 | `FINNHUB_API_KEY` | *(required)* | Free/developer keys available from Finnhub; without it adapter is **disabled**. |
 | `FINNHUB_SYMBOLS` | 7 US equities | Comma list of tickers. |
 
-From the **repository root**, `FINNHUB_API_KEY=xxx npm run dev:server:finnhub` enables `SOURCES=finnhub` with a longer bundled symbol list (see root `package.json` script).
+From the **repository root**, `npm run dev:server:finnhub` enables `SOURCES=finnhub` with a longer bundled symbol list. Requires `FINNHUB_API_KEY` set in `.env` (see `.env.example`).
 
 ### Default symbols
 
